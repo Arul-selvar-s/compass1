@@ -46,12 +46,14 @@ class DriveSync @Inject constructor(
 
     private suspend fun token(): String? = withContext(Dispatchers.IO) {
         try {
-            val account = GoogleSignIn.getLastSignedInAccount(context) ?: return@withContext null
-            com.google.android.gms.auth.GoogleAuthUtil.getToken(context, account.account, DRIVE_SCOPE)
+            val signedIn = GoogleSignIn.getLastSignedInAccount(context) ?: return@withContext null
+            val acct = signedIn.account ?: return@withContext null
+            com.google.android.gms.auth.GoogleAuthUtil.getToken(context, acct, DRIVE_SCOPE)
         } catch (e: Exception) {
             null
         }
     }
+    
 
     /** Upload all diary entries to Drive. Called after Save & Lock. */
     suspend fun uploadAll(): Result<Unit> = withContext(Dispatchers.IO) {
