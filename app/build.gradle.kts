@@ -9,6 +9,15 @@ plugins {
 android {
     namespace = "com.compass.diary"
     compileSdk = 34
+
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("compass-debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
     defaultConfig {
         applicationId = "com.compass.diary"
         minSdk = 26
