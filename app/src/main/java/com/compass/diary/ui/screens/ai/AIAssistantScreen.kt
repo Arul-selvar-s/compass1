@@ -69,7 +69,7 @@ fun AIAssistantScreen(onBack: () -> Unit, onPage: (String) -> Unit, viewModel: A
                     }
                 }
             }
-            LazyColumn(state = listState, Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            LazyColumn(modifier = Modifier.weight(1f), state = listState, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(messages, key = { it.id }) { msg ->
                     val isUser = msg.role == "user"
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start) {
