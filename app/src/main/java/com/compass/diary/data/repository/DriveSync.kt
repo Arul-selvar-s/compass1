@@ -1,5 +1,5 @@
 package com.compass.diary.data.repository
-
+ 
 import android.content.Context
 import com.compass.diary.data.local.entity.DiaryEntryEntity
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -15,16 +15,10 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
-
+ 
 /**
  * Backs up ALL diary entries to a single JSON file in the user's Google Drive
  * (file name: compass_diary_backup.json, created via the Drive "drive.file" scope).
- *
- * Requires one-time setup in Google Cloud Console:
- *   • Enable Drive API
- *   • OAuth consent screen configured
- *   • OAuth client ID (Android) registered with package name + SHA-1
- * See README.md for step-by-step instructions.
  */
 @Singleton
 class DriveSync @Inject constructor(
@@ -38,27 +32,32 @@ class DriveSync @Inject constructor(
         private const val MIME_JSON   = "application/json"
         private const val DRIVE_SCOPE = "oauth2:https://www.googleapis.com/auth/drive.file"
     }
-
+ 
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
-
-    private suspend fun token(): String? = withContext(Dispatchers.IO) {
+ 
+    /** Throws with a specific message instead of silently returning null,
+     *  so failures actually surface in the UI instead of looking like "success". */
+    private suspend fun token(): String = withContext(Dispatchers.IO) {
+        val signedIn = GoogleSignIn.getLastSignedInAccount(context)
+            ?: throw Exception("Not signed in to Google")
+        val acct = signedIn.account
+            ?: throw Exception("Signed-in account has no Android Account object")
         try {
-            val signedIn = GoogleSignIn.getLastSignedInAccount(context) ?: return@withContext null
-            val acct = signedIn.account ?: return@withContext null
             com.google.android.gms.auth.GoogleAuthUtil.getToken(context, acct, DRIVE_SCOPE)
+        } catch (e: com.google.android.gms.auth.UserRecoverableAuthException) {
+            throw Exception("Google needs you to re-approve Drive access — sign out and sign back in from Settings")
         } catch (e: Exception) {
-            null
+            throw Exception("Token error: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
-    
-
-    /** Upload all diary entries to Drive. Called after Save & Lock. */
+ 
+    /** Upload all diary entries to Drive. Called after Save & Lock and Sync Now. */
     suspend fun uploadAll(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val tok = token() ?: return@withContext Result.failure(Exception("Not signed in to Google"))
+            val tok = token()
             val entries = repo.getAllForBackup()
             val arr = JSONArray()
             entries.forEach { e ->
@@ -81,11 +80,11 @@ class DriveSync @Inject constructor(
             Result.failure(e)
         }
     }
-
+ 
     /** Download backup from Drive and restore into local DB. Called right after sign-in. */
     suspend fun downloadAndRestore(): Result<Int> = withContext(Dispatchers.IO) {
         try {
-            val tok = token() ?: return@withContext Result.failure(Exception("Not signed in to Google"))
+            val tok = token()
             val id = findFileId(tok) ?: return@withContext Result.success(0)
             val content = downloadFile(tok, id)
             val json = JSONObject(content)
@@ -109,38 +108,50 @@ class DriveSync @Inject constructor(
             Result.failure(e)
         }
     }
-
+ 
     private fun findFileId(tok: String): String? {
         val url = "$DRIVE_V3/files?q=name='$FILE_NAME'+and+trashed=false&fields=files(id)"
         val resp = client.newCall(Request.Builder().url(url)
             .addHeader("Authorization", "Bearer $tok").build()).execute()
+        if (!resp.isSuccessful) {
+            throw Exception("Drive query failed: ${resp.code} ${resp.body?.string()}")
+        }
         val files = JSONObject(resp.body?.string() ?: "{}").optJSONArray("files") ?: return null
         return if (files.length() > 0) files.getJSONObject(0).getString("id") else null
     }
-
+ 
     private fun createFile(tok: String, body: String) {
         val meta = JSONObject().apply { put("name", FILE_NAME) }.toString()
         val mp = "--b\r\nContent-Type: $MIME_JSON\r\n\r\n$meta\r\n--b\r\nContent-Type: $MIME_JSON\r\n\r\n$body\r\n--b--"
-        client.newCall(Request.Builder()
+        val resp = client.newCall(Request.Builder()
             .url("$DRIVE_UPL/files?uploadType=multipart")
             .addHeader("Authorization", "Bearer $tok")
             .post(mp.toRequestBody("multipart/related; boundary=b".toMediaType()))
             .build()).execute()
+        if (!resp.isSuccessful) {
+            throw Exception("Drive create failed: ${resp.code} ${resp.body?.string()}")
+        }
     }
-
+ 
     private fun updateFile(tok: String, id: String, body: String) {
-        client.newCall(Request.Builder()
+        val resp = client.newCall(Request.Builder()
             .url("$DRIVE_UPL/files/$id?uploadType=media")
             .addHeader("Authorization", "Bearer $tok")
             .patch(body.toRequestBody(MIME_JSON.toMediaType()))
             .build()).execute()
+        if (!resp.isSuccessful) {
+            throw Exception("Drive update failed: ${resp.code} ${resp.body?.string()}")
+        }
     }
-
+ 
     private fun downloadFile(tok: String, id: String): String {
         val resp = client.newCall(Request.Builder()
             .url("$DRIVE_V3/files/$id?alt=media")
             .addHeader("Authorization", "Bearer $tok")
             .build()).execute()
+        if (!resp.isSuccessful) {
+            throw Exception("Drive download failed: ${resp.code} ${resp.body?.string()}")
+        }
         return resp.body?.string() ?: "{}"
     }
 }
