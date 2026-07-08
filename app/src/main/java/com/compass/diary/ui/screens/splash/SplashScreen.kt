@@ -54,9 +54,7 @@ fun SplashScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("COMPASS", style = MaterialTheme.typography.headlineLarge,
                         fontWeight = FontWeight.Bold, color = CompassColors.White, letterSpacing = 6.sp)
-                    Spacer(Modifier.height(8.dp))
-                    Text("Your private diary", style = MaterialTheme.typography.bodyMedium,
-                        color = CompassColors.Silver400, letterSpacing = 2.sp)
+                    
                 }
             }
         }
