@@ -102,6 +102,29 @@ fun CompassScreen(
                     )
                 }
 
+                val labelRadius = r * 0.70f
+                val nsewPaint = android.graphics.Paint().apply {
+                    textSize = 16.sp.toPx()
+                    textAlign = android.graphics.Paint.Align.CENTER
+                    isFakeBoldText = true
+                    isAntiAlias = true
+                }
+                listOf(
+                    "N" to 0.0,
+                    "E" to 90.0,
+                    "S" to 180.0,
+                    "W" to 270.0
+                ).forEach { (label, deg) ->
+                    val rad = Math.toRadians(deg)
+                    val x = c.x + labelRadius * sin(rad).toFloat()
+                    val y = c.y - labelRadius * cos(rad).toFloat() + (nsewPaint.textSize / 3f)
+                    nsewPaint.color = if (label == "N")
+                        android.graphics.Color.rgb(0xEF, 0x44, 0x44)
+                    else
+                        android.graphics.Color.rgb(0xE5, 0xE7, 0xEB)
+                    drawContext.canvas.nativeCanvas.drawText(label, x, y, nsewPaint)
+                }
+
                 rotate(displayAngle, pivot = c) {
                     drawPath(Path().apply {
                         moveTo(c.x, c.y + 7.dp.toPx()); lineTo(c.x - 7.dp.toPx(), c.y)
