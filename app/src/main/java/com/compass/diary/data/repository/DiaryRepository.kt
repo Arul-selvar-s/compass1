@@ -17,13 +17,18 @@ class DiaryRepository @Inject constructor(
     private val versionHistoryDao: VersionHistoryDao,
     private val drawingDao: DrawingDao
 ) {
+    companion object {
+        private const val M_LOCK  = "\u2060L\u2060"
+        private const val M_DRAFT = "\u2060D\u2060"
+        private const val M_SPANS = "\u2060S\u2060"
+    }
+
     fun getAllEntries(): Flow<List<DiaryEntryEntity>> = diaryDao.getAllEntries()
     fun getEntryByDate(dateKey: String): Flow<DiaryEntryEntity?> = diaryDao.getEntryByDate(dateKey)
     fun getAllDateKeys(): Flow<List<String>> = diaryDao.getAllDateKeys()
     suspend fun getEntryByDateOnce(dateKey: String) = diaryDao.getEntryByDateOnce(dateKey)
     suspend fun getAllForBackup() = diaryDao.getAllForBackup()
 
-    /** Guarantees a row exists before any UPDATE — fixes silent-save bug on old/new dates */
     suspend fun ensureEntry(dateKey: String) {
         if (diaryDao.getEntryByDateOnce(dateKey) == null) {
             val date = runCatching { LocalDate.parse(dateKey) }.getOrDefault(LocalDate.now())
@@ -32,7 +37,7 @@ class DiaryRepository @Inject constructor(
     }
 
     suspend fun saveContent(dateKey: String, contentJson: String, plainText: String) {
-        ensureEntry(dateKey)  // ← critical fix: row always exists before UPDATE
+        ensureEntry(dateKey)
         val wc = plainText.split(Regex("\\s+")).filter { it.isNotBlank() }.size
         diaryDao.updateContent(dateKey, contentJson, plainText, wc)
         versionHistoryDao.insertVersion(
@@ -40,6 +45,39 @@ class DiaryRepository @Inject constructor(
         )
         if (versionHistoryDao.countVersions(dateKey) > 50)
             versionHistoryDao.pruneOldVersions(dateKey, System.currentTimeMillis() - 30L * 86_400_000)
+    }
+
+    suspend fun autoLockPastEntries() {
+        val todayKey = LocalDate.now().toString()
+        val all = diaryDao.getAllForBackup()
+        for (entry in all) {
+            if (entry.dateKey >= todayKey) continue
+            val raw = entry.contentJson
+            if (!raw.contains(M_DRAFT)) continue
+
+            val locked = if (raw.contains(M_LOCK)) raw.substringAfter(M_LOCK).substringBefore(M_DRAFT) else ""
+            val rest = raw.substringAfter(M_DRAFT, "")
+            val draftText = rest.substringBefore(M_SPANS)
+            if (draftText.isBlank()) continue
+
+            val combined = if (locked.isBlank()) draftText else "$locked\n\n$draftText"
+            val newContent = "$M_LOCK$combined$M_DRAFT$M_SPANS"
+            val wc = combined.split(Regex("\\s+")).filter { it.isNotBlank() }.size
+            diaryDao.updateContent(entry.dateKey, newContent, combined, wc)
+        }
+    }
+
+    suspend fun starWholeDay(dateKey: String) {
+        val entry = diaryDao.getEntryByDateOnce(dateKey) ?: return
+        if (entry.plainText.isBlank()) return
+        starredDao.insertStarred(
+            StarredItemEntity(
+                diaryDateKey = dateKey,
+                contentType  = "DAY",
+                contentJson  = entry.contentJson,
+                preview      = entry.plainText.take(80)
+            )
+        )
     }
 
     suspend fun restoreFromBackup(entries: List<DiaryEntryEntity>) {
