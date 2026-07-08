@@ -29,10 +29,6 @@ import java.util.*
 import javax.inject.Inject
 import kotlin.math.abs
 
-// ─────────────────────────────────────────────────────────────────
-// Plain-text extraction — mirrors the packing format used in
-// DailyPageScreen.kt (M_LOCK / M_DRAFT / M_SPANS markers).
-// ─────────────────────────────────────────────────────────────────
 private const val VM_M_LOCK  = "\u2060L\u2060"
 private const val VM_M_DRAFT = "\u2060D\u2060"
 private const val VM_M_SPANS = "\u2060S\u2060"
@@ -46,9 +42,6 @@ private fun extractPlainText(raw: String): String {
     } catch (e: Exception) { raw.trim() }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// COMPASS VIEW MODEL — heading + exact-match unlock
-// ─────────────────────────────────────────────────────────────────
 @HiltViewModel
 class CompassViewModel @Inject constructor(
     private val sensor: CompassSensorManager,
@@ -71,7 +64,6 @@ class CompassViewModel @Inject constructor(
         }
     }
 
-    /** EXACT match — tolerance 0.5° handles only float rounding */
     fun tryUnlock(entered: Float) {
         val diff = if (savedAngle < 0f) 999f
         else abs(((entered - savedAngle + 540f) % 360f) - 180f)
@@ -81,9 +73,6 @@ class CompassViewModel @Inject constructor(
     fun resetAction() { _unlockAction.value = null }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// SETUP VIEW MODEL — first-launch wizard
-// ─────────────────────────────────────────────────────────────────
 @HiltViewModel
 class SetupViewModel @Inject constructor(
     private val sensor: CompassSensorManager,
@@ -131,23 +120,18 @@ class SetupViewModel @Inject constructor(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// SPLASH VIEW MODEL
-// ─────────────────────────────────────────────────────────────────
 @HiltViewModel
 class SplashViewModel @Inject constructor(private val prefs: PreferencesManager) : ViewModel() {
     val isSetupComplete: StateFlow<Boolean> = prefs.isSetupComplete
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 }
 
-// ─────────────────────────────────────────────────────────────────
-// DIARY VIEW MODEL — all diary operations
-// ─────────────────────────────────────────────────────────────────
 @HiltViewModel
 class DiaryViewModel @Inject constructor(
     private val repo: DiaryRepository,
     private val autoSave: AutoSaveManager,
-    private val driveSync: DriveSync
+    private val driveSync: DriveSync,
+    private val prefs: PreferencesManager
 ) : ViewModel() {
 
     val todayKey: StateFlow<String> = MutableStateFlow(LocalDate.now().toString())
@@ -188,6 +172,24 @@ class DiaryViewModel @Inject constructor(
     val completedReminders: StateFlow<List<ReminderEntity>> = repo.getCompletedReminders()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    init {
+        viewModelScope.launch { repo.autoLockPastEntries() }
+    }
+
+    private var syncJob: kotlinx.coroutines.Job? = null
+
+    private fun scheduleSync() {
+        syncJob?.cancel()
+        syncJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(3000)
+            val account = prefs.googleAccount.first()
+            val enabled = prefs.isAutoSyncEnabled.first()
+            if (!account.isNullOrBlank() && enabled) {
+                driveSync.uploadAll()
+            }
+        }
+    }
+
     fun selectEntry(dateKey: String) {
         _selectedKey.value = dateKey
         viewModelScope.launch { repo.ensureEntry(dateKey) }
@@ -196,16 +198,17 @@ class DiaryViewModel @Inject constructor(
     fun onContentChanged(dateKey: String, contentJson: String) {
         val plain = extractPlainText(contentJson)
         autoSave.onContentChanged { repo.saveContent(dateKey, contentJson, plain) }
+        scheduleSync()
     }
 
     fun forceSave(dateKey: String, contentJson: String) {
         viewModelScope.launch {
             val plain = extractPlainText(contentJson)
             autoSave.forceSave { repo.saveContent(dateKey, contentJson, plain) }
+            scheduleSync()
         }
     }
 
-    /** Save & Lock — persists content and syncs to Drive */
     fun saveAndLock(dateKey: String, contentJson: String) {
         viewModelScope.launch {
             val plain = extractPlainText(contentJson)
@@ -220,6 +223,14 @@ class DiaryViewModel @Inject constructor(
                 diaryDateKey = dateKey, contentType = "TEXT",
                 contentJson  = text, preview = text.take(80)
             ))
+            scheduleSync()
+        }
+    }
+
+    fun starWholeDay(dateKey: String) {
+        viewModelScope.launch {
+            repo.starWholeDay(dateKey)
+            scheduleSync()
         }
     }
 
@@ -228,6 +239,7 @@ class DiaryViewModel @Inject constructor(
     fun saveDrawing(dateKey: String, pathsJson: String) {
         viewModelScope.launch {
             repo.saveDrawing(DrawingEntity(diaryDateKey = dateKey, pathsJson = pathsJson, width = 1080, height = 1920))
+            scheduleSync()
         }
     }
 
@@ -242,16 +254,13 @@ class DiaryViewModel @Inject constructor(
         viewModelScope.launch { _searchResults.value = repo.searchEntries(q) }
     }
 
-    fun addReminder(r: ReminderEntity) { viewModelScope.launch { repo.upsertReminder(r) } }
-    fun deleteReminder(r: ReminderEntity) { viewModelScope.launch { repo.deleteReminder(r) } }
-    fun markReminderComplete(id: Long) { viewModelScope.launch { repo.markReminderCompleted(id) } }
+    fun addReminder(r: ReminderEntity) { viewModelScope.launch { repo.upsertReminder(r); scheduleSync() } }
+    fun deleteReminder(r: ReminderEntity) { viewModelScope.launch { repo.deleteReminder(r); scheduleSync() } }
+    fun markReminderComplete(id: Long) { viewModelScope.launch { repo.markReminderCompleted(id); scheduleSync() } }
 
-    override fun onCleared() { super.onCleared(); autoSave.dispose() }
+    override fun onCleared() { super.onCleared(); autoSave.dispose(); syncJob?.cancel() }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// SETTINGS VIEW MODEL
-// ─────────────────────────────────────────────────────────────────
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val prefs: PreferencesManager,
@@ -295,9 +304,6 @@ class SettingsViewModel @Inject constructor(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// AI VIEW MODEL — Anthropic Claude integration
-// ─────────────────────────────────────────────────────────────────
 @HiltViewModel
 class AIViewModel @Inject constructor(
     private val prefs: PreferencesManager,
