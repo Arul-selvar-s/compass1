@@ -29,7 +29,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-// ── Span tracking (survives keyboard onValueChange stripping spans) ──
 private enum class Fmt { BOLD, ITALIC, UNDERLINE, STRIKE }
 private data class RSpan(val s: Int, val e: Int, val f: Fmt)
 
@@ -40,7 +39,6 @@ private fun Fmt.toSpanStyle() = when (this) {
     Fmt.STRIKE    -> SpanStyle(textDecoration = TextDecoration.LineThrough)
 }
 
-/** Adjusts span positions after text insertions/deletions */
 private fun adjustSpans(spans: List<RSpan>, oldLen: Int, newLen: Int, chAt: Int, delEnd: Int): List<RSpan> {
     val d = newLen - oldLen; if (d == 0) return spans
     return spans.mapNotNull { sp ->
@@ -51,7 +49,6 @@ private fun adjustSpans(spans: List<RSpan>, oldLen: Int, newLen: Int, chAt: Int,
     }
 }
 
-// ── Content format: locked text + draft text + span data ─────────
 private const val M_LOCK  = "\u2060L\u2060"
 private const val M_DRAFT = "\u2060D\u2060"
 private const val M_SPANS = "\u2060S\u2060"
@@ -95,6 +92,7 @@ fun DailyPageScreen(
     var loaded      by remember(dateKey) { mutableStateOf(false) }
     var showDrawing by remember { mutableStateOf(false) }
     var showConfirm by remember { mutableStateOf(false) }
+    var starredDay  by remember(dateKey) { mutableStateOf(false) }
 
     LaunchedEffect(entry) {
         if (!loaded && entry != null && entry!!.dateKey == dateKey) {
@@ -117,7 +115,6 @@ fun DailyPageScreen(
         }
     }
 
-    // THE KEY FIX: rebuild AnnotatedString from plain text + our span list each frame
     val annotated = remember(draft.text, spans) {
         buildAnnotatedString {
             append(draft.text)
@@ -147,7 +144,7 @@ fun DailyPageScreen(
                 navigationIcon = {
                     IconButton(onClick = {
                         saveJob?.cancel()
-                        viewModel.onContentChanged(dateKey, packContent(lockedText, draft.text, spans))
+                        viewModel.forceSave(dateKey, packContent(lockedText, draft.text, spans))
                         onBack()
                     }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
                 },
@@ -173,6 +170,16 @@ fun DailyPageScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = {
+                        viewModel.starWholeDay(dateKey)
+                        starredDay = true
+                    }) {
+                        Icon(
+                            if (starredDay) Icons.Default.Star else Icons.Default.StarBorder,
+                            "Star this day",
+                            tint = CompassColors.Star
+                        )
+                    }
                     if (draft.text.isNotBlank()) {
                         IconButton(onClick = { showConfirm = true }) {
                             Icon(Icons.Default.Save, "Save & Lock", tint = CompassColors.Gold400)
@@ -185,7 +192,6 @@ fun DailyPageScreen(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
 
-            // ── FORMAT TOOLBAR ────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -212,7 +218,6 @@ fun DailyPageScreen(
             }
             HorizontalDivider()
 
-            // ── EDITOR AREA ───────────────────────────────────────
             Column(
                 modifier = Modifier
                     .fillMaxSize()
