@@ -339,7 +339,7 @@ class AIViewModel @Inject constructor(
         viewModelScope.launch {
             val key = prefs.anthropicApiKey.first()
             if (key.isNullOrBlank()) {
-                _messages.update { it + Message(role = "assistant", content = "Add your Anthropic API key in Settings → AI Assistant.") }
+                _messages.update { it + Message(role = "assistant", content = "Add your Gemini API key in Settings → AI Assistant.") }
                 _thinking.value = false
                 return@launch
             }
@@ -351,25 +351,47 @@ class AIViewModel @Inject constructor(
 
             try {
                 val body = JSONObject().apply {
-                    put("model", "claude-sonnet-4-6")
-                    put("max_tokens", 1024)
-                    put("system", "You are a diary assistant. Answer questions about these diary entries and cite dates.\n\n$context")
-                    put("messages", JSONArray().apply {
-                        put(JSONObject().apply { put("role", "user"); put("content", question) })
+                    put("systemInstruction", JSONObject().apply {
+                        put("parts", JSONArray().apply {
+                            put(JSONObject().apply {
+                                put("text", "You are a diary assistant. Answer questions about these diary entries and cite dates.\n\n$context")
+                            })
+                        })
+                    })
+                    put("contents", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("role", "user")
+                            put("parts", JSONArray().apply {
+                                put(JSONObject().apply { put("text", question) })
+                            })
+                        })
+                    })
+                    put("generationConfig", JSONObject().apply {
+                        put("maxOutputTokens", 1024)
                     })
                 }.toString()
 
                 val req = Request.Builder()
-                    .url("https://api.anthropic.com/v1/messages")
-                    .addHeader("x-api-key", key)
-                    .addHeader("anthropic-version", "2023-06-01")
+                    .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
+                    .addHeader("x-goog-api-key", key)
                     .addHeader("content-type", "application/json")
                     .post(body.toRequestBody("application/json".toMediaType()))
                     .build()
 
                 val resp = withContext(Dispatchers.IO) { http.newCall(req).execute() }
-                val text = JSONObject(resp.body?.string() ?: "{}")
-                    .getJSONArray("content").getJSONObject(0).getString("text")
+                val responseBody = resp.body?.string() ?: "{}"
+                val json = JSONObject(responseBody)
+
+                if (!resp.isSuccessful) {
+                    val errMsg = json.optJSONObject("error")?.optString("message") ?: "Unknown error"
+                    _messages.update { it + Message(role = "assistant", content = "Error: $errMsg") }
+                    _thinking.value = false
+                    return@launch
+                }
+
+                val text = json.getJSONArray("candidates")
+                    .getJSONObject(0).getJSONObject("content")
+                    .getJSONArray("parts").getJSONObject(0).getString("text")
                 val dates = Regex("""\d{4}-\d{2}-\d{2}""").findAll(text)
                     .map { it.value }.distinct().take(3).toList()
 
