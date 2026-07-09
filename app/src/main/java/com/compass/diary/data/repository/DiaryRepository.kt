@@ -80,8 +80,18 @@ class DiaryRepository @Inject constructor(
         )
     }
 
-    suspend fun restoreFromBackup(entries: List<DiaryEntryEntity>) {
-        entries.forEach { diaryDao.upsertEntry(it) }
+    /**
+     * Cross-device merge — only overwrites a local entry if the REMOTE copy is
+     * genuinely newer (by updatedAt). Prevents a stale pull from clobbering a
+     * newer local edit that just hasn't finished uploading yet.
+     */
+    suspend fun mergeFromBackup(entries: List<DiaryEntryEntity>) {
+        entries.forEach { remote ->
+            val local = diaryDao.getEntryByDateOnce(remote.dateKey)
+            if (local == null || remote.updatedAt > local.updatedAt) {
+                diaryDao.upsertEntry(remote)
+            }
+        }
     }
 
     suspend fun searchEntries(q: String) = diaryDao.searchEntries(q)
