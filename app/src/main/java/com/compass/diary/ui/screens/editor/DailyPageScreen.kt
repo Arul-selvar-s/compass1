@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -21,6 +22,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.compass.diary.ui.components.DrawingCanvas
 import com.compass.diary.ui.theme.CompassColors
 import com.compass.diary.util.SaveState
@@ -86,7 +89,7 @@ fun DailyPageScreen(
     val entry     by viewModel.currentEntry.collectAsState()
     val saveState by viewModel.saveState.collectAsState()
 
-    var lockedText  by remember { mutableStateOf("") }
+    var lockedField by remember(dateKey) { mutableStateOf(TextFieldValue("")) }
     var draft       by remember { mutableStateOf(TextFieldValue()) }
     var spans       by remember { mutableStateOf(listOf<RSpan>()) }
     var loaded      by remember(dateKey) { mutableStateOf(false) }
@@ -97,7 +100,7 @@ fun DailyPageScreen(
     LaunchedEffect(entry) {
         if (!loaded && entry != null && entry!!.dateKey == dateKey) {
             val (locked, draftText, draftSpans) = unpackContent(entry!!.contentJson)
-            lockedText = locked
+            lockedField = TextFieldValue(locked)
             if (draftText.isNotEmpty()) draft = TextFieldValue(draftText)
             spans = draftSpans
             loaded = true
@@ -111,8 +114,23 @@ fun DailyPageScreen(
         saveJob?.cancel()
         saveJob = scope.launch {
             delay(800)
-            viewModel.onContentChanged(dateKey, packContent(lockedText, draft.text, spans))
+            viewModel.onContentChanged(dateKey, packContent(lockedField.text, draft.text, spans))
         }
+    }
+    fun saveImmediately() {
+        saveJob?.cancel()
+        viewModel.forceSave(dateKey, packContent(lockedField.text, draft.text, spans))
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, dateKey) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                saveImmediately()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val annotated = remember(draft.text, spans) {
@@ -142,11 +160,9 @@ fun DailyPageScreen(
         topBar = {
             TopAppBar(
                 navigationIcon = {
-                    IconButton(onClick = {
-                        saveJob?.cancel()
-                        viewModel.forceSave(dateKey, packContent(lockedText, draft.text, spans))
-                        onBack()
-                    }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                    IconButton(onClick = { saveImmediately(); onBack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                    }
                 },
                 title = {
                     Column {
@@ -225,7 +241,7 @@ fun DailyPageScreen(
                     .padding(horizontal = 20.dp, vertical = 16.dp)
                     .imePadding()
             ) {
-                if (lockedText.isNotBlank()) {
+                if (lockedField.text.isNotBlank()) {
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                         shape = RoundedCornerShape(8.dp),
@@ -236,14 +252,34 @@ fun DailyPageScreen(
                                 Icon(Icons.Default.Lock, null,
                                     Modifier.size(13.dp), tint = CompassColors.Success)
                                 Spacer(Modifier.width(4.dp))
-                                Text("Saved — read only",
+                                Text("Saved — read only • select text to star it",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = CompassColors.Success)
                             }
                             Spacer(Modifier.height(8.dp))
-                            Text(lockedText,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+
+                            BasicTextField(
+                                value = lockedField,
+                                onValueChange = { lockedField = it },
+                                readOnly = true,
+                                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                                ),
+                                cursorBrush = SolidColor(Color.Transparent)
+                            )
+
+                            if (!lockedField.selection.collapsed) {
+                                Spacer(Modifier.height(6.dp))
+                                TextButton(onClick = {
+                                    val sel = lockedField.selection
+                                    viewModel.starContent(dateKey, lockedField.text.substring(sel.min, sel.max))
+                                    lockedField = lockedField.copy(selection = TextRange(sel.max))
+                                }) {
+                                    Icon(Icons.Default.Star, null, tint = CompassColors.Star, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Star selected text", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
                         }
                     }
                     HorizontalDivider(Modifier.padding(vertical = 16.dp))
@@ -273,7 +309,7 @@ fun DailyPageScreen(
                     decorationBox = { inner ->
                         if (draft.text.isEmpty()) {
                             Text(
-                                if (lockedText.isBlank()) "Write anything…" else "Continue your entry…",
+                                if (lockedField.text.isBlank()) "Write anything…" else "Continue your entry…",
                                 style = MaterialTheme.typography.bodyLarge.copy(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
                             )
@@ -292,15 +328,15 @@ fun DailyPageScreen(
             title = { Text("Save and lock?") },
             text  = {
                 Text("The current text will be permanently saved and locked.\n\n" +
-                     "You can keep writing below it, but the locked part cannot be edited or deleted.\n\n" +
+                     "You can keep writing below it, but the locked part cannot be edited — only selected and starred.\n\n" +
                      "Your diary will also be backed up to Google Drive.")
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        val combined = if (lockedText.isBlank()) draft.text
-                                       else "$lockedText\n\n${draft.text}"
-                        lockedText  = combined
+                        val combined = if (lockedField.text.isBlank()) draft.text
+                                       else "${lockedField.text}\n\n${draft.text}"
+                        lockedField = TextFieldValue(combined)
                         draft       = TextFieldValue()
                         spans       = emptyList()
                         showConfirm = false
