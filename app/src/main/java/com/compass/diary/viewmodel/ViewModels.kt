@@ -172,8 +172,25 @@ class DiaryViewModel @Inject constructor(
     val completedReminders: StateFlow<List<ReminderEntity>> = repo.getCompletedReminders()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    
     init {
         viewModelScope.launch { repo.autoLockPastEntries() }
+
+        // Polls Drive every ~12s while any diary screen is open and pulls in
+        // changes made from other signed-in devices. Combined with the ~3s
+        // push-after-edit in scheduleSync(), this keeps devices in sync within
+        // roughly 15 seconds of each other — not instant, but no more "two
+        // separate apps."
+        viewModelScope.launch {
+            while (true) {
+                val account = prefs.googleAccount.first()
+                val enabled = prefs.isAutoSyncEnabled.first()
+                if (!account.isNullOrBlank() && enabled) {
+                    driveSync.downloadAndRestore()
+                }
+                kotlinx.coroutines.delay(12_000)
+            }
+        }
     }
 
     private var syncJob: kotlinx.coroutines.Job? = null
