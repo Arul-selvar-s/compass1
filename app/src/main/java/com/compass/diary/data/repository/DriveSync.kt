@@ -102,7 +102,7 @@ class DriveSync @Inject constructor(
                     tags        = o.optString("tags", "")
                 )
             }
-            repo.restoreFromBackup(entries)
+            repo.mergeFromBackup(entries)
             Result.success(entries.size)
         } catch (e: Exception) {
             Result.failure(e)
