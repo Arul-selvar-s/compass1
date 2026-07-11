@@ -1,5 +1,6 @@
 package com.compass.diary.ui.screens.home
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,25 +35,41 @@ fun DiaryHomeScreen(
     onSettings: () -> Unit,
     viewModel: DiaryViewModel = hiltViewModel()
 ) {
-    val entries  by viewModel.allEntries.collectAsState()
-    val todayKey by viewModel.todayKey.collectAsState()
+    val entries       by viewModel.allEntries.collectAsState()
+    val todayKey      by viewModel.todayKey.collectAsState()
+    val refreshStatus by viewModel.refreshStatus.collectAsState()
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("Compass", fontWeight = FontWeight.Bold)
-                        Text(LocalDate.now().format(DateTimeFormatter.ofPattern("MMMM yyyy")),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text("Compass", fontWeight = FontWeight.Bold)
+                            Text(LocalDate.now().format(DateTimeFormatter.ofPattern("MMMM yyyy")),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { viewModel.manualRefresh() }) {
+                            Icon(Icons.Default.Refresh, "Refresh from Drive")
+                        }
+                        IconButton(onClick = onSearch) { Icon(Icons.Default.Search, "Search") }
+                        IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Settings") }
                     }
-                },
-                actions = {
-                    IconButton(onClick = onSearch) { Icon(Icons.Default.Search, "Search") }
-                    IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Settings") }
+                )
+                AnimatedVisibility(visible = refreshStatus != null) {
+                    Surface(color = CompassColors.Blue800, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            refreshStatus ?: "",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                        )
+                    }
                 }
-            )
+            }
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
