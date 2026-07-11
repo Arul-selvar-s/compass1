@@ -36,11 +36,17 @@ interface StarredDao {
     @Query("SELECT * FROM starred_items ORDER BY starredAt DESC")
     fun getAllStarred(): Flow<List<StarredItemEntity>>
 
+    @Query("SELECT * FROM starred_items ORDER BY starredAt ASC")
+    suspend fun getAllStarredForBackup(): List<StarredItemEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertStarred(item: StarredItemEntity): Long
 
     @Query("DELETE FROM starred_items WHERE id = :id")
     suspend fun deleteStarredById(id: Long)
+
+    @Query("SELECT * FROM starred_items WHERE diaryDateKey = :dateKey AND contentJson = :contentJson LIMIT 1")
+    suspend fun findMatch(dateKey: String, contentJson: String): StarredItemEntity?
 }
 
 @Dao
