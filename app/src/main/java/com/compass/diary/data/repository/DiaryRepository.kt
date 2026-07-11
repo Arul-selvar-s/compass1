@@ -80,16 +80,27 @@ class DiaryRepository @Inject constructor(
         )
     }
 
-    /**
-     * Cross-device merge — only overwrites a local entry if the REMOTE copy is
-     * genuinely newer (by updatedAt). Prevents a stale pull from clobbering a
-     * newer local edit that just hasn't finished uploading yet.
-     */
     suspend fun mergeFromBackup(entries: List<DiaryEntryEntity>) {
         entries.forEach { remote ->
             val local = diaryDao.getEntryByDateOnce(remote.dateKey)
             if (local == null || remote.updatedAt > local.updatedAt) {
                 diaryDao.upsertEntry(remote)
+            }
+        }
+    }
+
+    // ── Starred backup/merge ────────────────────────────────────────
+    suspend fun getAllStarredForBackup() = starredDao.getAllStarredForBackup()
+
+    /** Only ADDS stars that don't already exist locally (matched by date+content).
+     *  Note: unstarring on one device does not currently remove the star on other
+     *  devices — this merge is add-only, so a star survives cache-clear/reinstall
+     *  and shows up on every signed-in device, but deletions aren't (yet) propagated. */
+    suspend fun mergeStarredFromBackup(items: List<StarredItemEntity>) {
+        items.forEach { remote ->
+            val existing = starredDao.findMatch(remote.diaryDateKey, remote.contentJson)
+            if (existing == null) {
+                starredDao.insertStarred(remote.copy(id = 0))
             }
         }
     }
