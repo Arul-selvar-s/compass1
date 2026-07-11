@@ -1,7 +1,8 @@
 package com.compass.diary.data.repository
- 
+
 import android.content.Context
 import com.compass.diary.data.local.entity.DiaryEntryEntity
+import com.compass.diary.data.local.entity.StarredItemEntity
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -15,11 +16,7 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
- 
-/**
- * Backs up ALL diary entries to a single JSON file in the user's Google Drive
- * (file name: compass_diary_backup.json, created via the Drive "drive.file" scope).
- */
+
 @Singleton
 class DriveSync @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -32,14 +29,12 @@ class DriveSync @Inject constructor(
         private const val MIME_JSON   = "application/json"
         private const val DRIVE_SCOPE = "oauth2:https://www.googleapis.com/auth/drive.file"
     }
- 
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
- 
-    /** Throws with a specific message instead of silently returning null,
-     *  so failures actually surface in the UI instead of looking like "success". */
+
     private suspend fun token(): String = withContext(Dispatchers.IO) {
         val signedIn = GoogleSignIn.getLastSignedInAccount(context)
             ?: throw Exception("Not signed in to Google")
@@ -53,15 +48,16 @@ class DriveSync @Inject constructor(
             throw Exception("Token error: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
- 
-    /** Upload all diary entries to Drive. Called after Save & Lock and Sync Now. */
+
     suspend fun uploadAll(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val tok = token()
             val entries = repo.getAllForBackup()
-            val arr = JSONArray()
+            val starred = repo.getAllStarredForBackup()
+
+            val entryArr = JSONArray()
             entries.forEach { e ->
-                arr.put(JSONObject().apply {
+                entryArr.put(JSONObject().apply {
                     put("dateKey",     e.dateKey)
                     put("title",       e.title)
                     put("contentJson", e.contentJson)
@@ -72,7 +68,23 @@ class DriveSync @Inject constructor(
                     put("tags",        e.tags)
                 })
             }
-            val body = JSONObject().apply { put("entries", arr) }.toString()
+
+            val starredArr = JSONArray()
+            starred.forEach { s ->
+                starredArr.put(JSONObject().apply {
+                    put("diaryDateKey", s.diaryDateKey)
+                    put("contentType",  s.contentType)
+                    put("contentJson",  s.contentJson)
+                    put("preview",      s.preview)
+                    put("starredAt",    s.starredAt)
+                })
+            }
+
+            val body = JSONObject().apply {
+                put("entries", entryArr)
+                put("starred", starredArr)
+            }.toString()
+
             val existingId = findFileId(tok)
             if (existingId == null) createFile(tok, body) else updateFile(tok, existingId, body)
             Result.success(Unit)
@@ -80,17 +92,17 @@ class DriveSync @Inject constructor(
             Result.failure(e)
         }
     }
- 
-    /** Download backup from Drive and restore into local DB. Called right after sign-in. */
+
     suspend fun downloadAndRestore(): Result<Int> = withContext(Dispatchers.IO) {
         try {
             val tok = token()
             val id = findFileId(tok) ?: return@withContext Result.success(0)
             val content = downloadFile(tok, id)
             val json = JSONObject(content)
-            val arr = json.getJSONArray("entries")
-            val entries = (0 until arr.length()).map { i ->
-                val o = arr.getJSONObject(i)
+
+            val entryArr = json.optJSONArray("entries") ?: JSONArray()
+            val entries = (0 until entryArr.length()).map { i ->
+                val o = entryArr.getJSONObject(i)
                 DiaryEntryEntity(
                     dateKey     = o.getString("dateKey"),
                     title       = o.getString("title"),
@@ -103,12 +115,26 @@ class DriveSync @Inject constructor(
                 )
             }
             repo.mergeFromBackup(entries)
+
+            val starredArr = json.optJSONArray("starred") ?: JSONArray()
+            val starred = (0 until starredArr.length()).map { i ->
+                val o = starredArr.getJSONObject(i)
+                StarredItemEntity(
+                    diaryDateKey = o.getString("diaryDateKey"),
+                    contentType  = o.optString("contentType", "TEXT"),
+                    contentJson  = o.optString("contentJson", ""),
+                    preview      = o.optString("preview", ""),
+                    starredAt    = o.optLong("starredAt", System.currentTimeMillis())
+                )
+            }
+            repo.mergeStarredFromBackup(starred)
+
             Result.success(entries.size)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
- 
+
     private fun findFileId(tok: String): String? {
         val url = "$DRIVE_V3/files?q=name='$FILE_NAME'+and+trashed=false&fields=files(id)"
         val resp = client.newCall(Request.Builder().url(url)
@@ -119,7 +145,7 @@ class DriveSync @Inject constructor(
         val files = JSONObject(resp.body?.string() ?: "{}").optJSONArray("files") ?: return null
         return if (files.length() > 0) files.getJSONObject(0).getString("id") else null
     }
- 
+
     private fun createFile(tok: String, body: String) {
         val meta = JSONObject().apply { put("name", FILE_NAME) }.toString()
         val mp = "--b\r\nContent-Type: $MIME_JSON\r\n\r\n$meta\r\n--b\r\nContent-Type: $MIME_JSON\r\n\r\n$body\r\n--b--"
@@ -132,7 +158,7 @@ class DriveSync @Inject constructor(
             throw Exception("Drive create failed: ${resp.code} ${resp.body?.string()}")
         }
     }
- 
+
     private fun updateFile(tok: String, id: String, body: String) {
         val resp = client.newCall(Request.Builder()
             .url("$DRIVE_UPL/files/$id?uploadType=media")
@@ -143,7 +169,7 @@ class DriveSync @Inject constructor(
             throw Exception("Drive update failed: ${resp.code} ${resp.body?.string()}")
         }
     }
- 
+
     private fun downloadFile(tok: String, id: String): String {
         val resp = client.newCall(Request.Builder()
             .url("$DRIVE_V3/files/$id?alt=media")
