@@ -21,6 +21,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.compass.diary.ui.theme.CompassColors
 import com.compass.diary.viewmodel.AIViewModel
+import java.text.SimpleDateFormat
+import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -30,6 +32,7 @@ fun AIAssistantScreen(onBack: () -> Unit, onPage: (String) -> Unit, viewModel: A
     val keySet     by viewModel.isApiKeyConfigured.collectAsState()
     var input      by remember { mutableStateOf("") }
     val listState  = rememberLazyListState()
+    val timeFmt    = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
 
     LaunchedEffect(messages.size) { if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1) }
 
@@ -81,6 +84,13 @@ fun AIAssistantScreen(onBack: () -> Unit, onPage: (String) -> Unit, viewModel: A
                                     color = if (isUser) Color.White else MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.padding(12.dp, 10.dp))
                             }
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                timeFmt.format(Date(msg.timestamp)),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            )
                             if (msg.sourceDates.isNotEmpty()) {
                                 Spacer(Modifier.height(4.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -88,7 +98,7 @@ fun AIAssistantScreen(onBack: () -> Unit, onPage: (String) -> Unit, viewModel: A
                                         AssistChip(onClick = { onPage(d) }, label = { Text(d, style = MaterialTheme.typography.labelSmall) }, modifier = Modifier.height(24.dp))
                                     }
                                 }
-                            }
+                            }                          
                         }
                     }
                 }
