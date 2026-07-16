@@ -343,11 +343,13 @@ class AIViewModel @Inject constructor(
     private val repo: DiaryRepository
 ) : ViewModel() {
 
+    
     data class Message(
         val id: String = UUID.randomUUID().toString(),
         val role: String,
         val content: String,
-        val sourceDates: List<String> = emptyList()
+        val sourceDates: List<String> = emptyList(),
+        val timestamp: Long = System.currentTimeMillis()
     )
 
     private val _messages = MutableStateFlow<List<Message>>(emptyList())
