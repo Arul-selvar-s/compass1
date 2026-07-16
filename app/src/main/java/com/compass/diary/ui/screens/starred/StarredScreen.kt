@@ -51,7 +51,10 @@ fun StarredScreen(onPage: (String) -> Unit, onBack: () -> Unit, viewModel: Diary
         } else {
             LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 item { Text("${starred.size} starred item${if (starred.size != 1) "s" else ""}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                
+                
                 items(starred, key = { it.id }) { item ->
+                    var showConfirm by remember { mutableStateOf(false) }
                     Card(onClick = { onPage(item.diaryDateKey) }, Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
                             Icon(Icons.Default.Star, null, tint = CompassColors.Star, modifier = Modifier.size(20.dp))
@@ -61,12 +64,28 @@ fun StarredScreen(onPage: (String) -> Unit, onBack: () -> Unit, viewModel: Diary
                                 Spacer(Modifier.height(4.dp))
                                 Text("${item.diaryDateKey}  •  ${df.format(Date(item.starredAt))}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            IconButton(onClick = { viewModel.removeStarred(item.id) }, Modifier.size(32.dp)) {
+                            IconButton(onClick = { showConfirm = true }, Modifier.size(32.dp)) {
                                 Icon(Icons.Default.Delete, "Remove", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
-                }
+                    if (showConfirm) {
+                        AlertDialog(
+                            onDismissRequest = { showConfirm = false },
+                            icon  = { Icon(Icons.Default.Delete, null) },
+                            title = { Text("Remove starred item?") },
+                            text  = { Text("This only removes it from your Starred collection — the diary page itself is untouched.") },
+                            confirmButton = {
+                                TextButton(onClick = { viewModel.removeStarred(item.id); showConfirm = false }) {
+                                    Text("Remove", color = CompassColors.Error)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showConfirm = false }) { Text("Cancel") }
+                            }
+                        )
+                    }
+                }               
             }
         }
     }
