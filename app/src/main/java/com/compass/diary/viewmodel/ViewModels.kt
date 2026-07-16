@@ -267,7 +267,14 @@ class DiaryViewModel @Inject constructor(
         }
     }
 
-    fun removeStarred(id: Long) { viewModelScope.launch { repo.removeStarred(id) } }
+    
+    fun removeStarred(id: Long) {
+        viewModelScope.launch {
+            repo.removeStarred(id)
+            driveSync.uploadAll()  // push the deletion to Drive immediately, so the next
+                                    // auto-poll doesn't pull the old copy back and revive it
+        }
+    }
 
     fun saveDrawing(dateKey: String, pathsJson: String) {
         viewModelScope.launch {
