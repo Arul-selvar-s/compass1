@@ -13,9 +13,11 @@ import com.compass.diary.data.local.entity.*
         StarredItemEntity::class,
         ReminderEntity::class,
         VersionHistoryEntity::class,
-        DrawingEntity::class
+        DrawingEntity::class,
+        SongMessageEntity::class,
+        VoiceMessageEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -24,10 +26,13 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun reminderDao(): ReminderDao
     abstract fun versionHistoryDao(): VersionHistoryDao
     abstract fun drawingDao(): DrawingDao
+    abstract fun songDao(): SongDao
+    abstract fun voiceMessageDao(): VoiceMessageDao
 
     companion object {
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "compass_diary.db")
+                .addMigrations(MIGRATION_1_2)
                 .fallbackToDestructiveMigration()
                 .build()
     }
