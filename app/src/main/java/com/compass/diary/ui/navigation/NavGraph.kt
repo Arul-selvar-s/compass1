@@ -11,10 +11,10 @@ import com.compass.diary.ui.screens.home.DiaryHomeScreen
 import com.compass.diary.ui.screens.reminders.RemindersScreen
 import com.compass.diary.ui.screens.search.SearchScreen
 import com.compass.diary.ui.screens.settings.SettingsScreen
+import com.compass.diary.ui.screens.songs.SongsScreen
 import com.compass.diary.ui.screens.splash.SplashScreen
 import com.compass.diary.ui.screens.starred.StarredScreen
 import com.compass.diary.ui.screens.unlock.UnlockSetupScreen
-import com.compass.diary.ui.screens.songs.SongsScreen
 
 object R {
     const val SPLASH    = "splash"
@@ -55,7 +55,8 @@ fun CompassNavGraph(navController: NavHostController) {
                 onSearch    = { navController.navigate(R.SEARCH) },
                 onAI        = { navController.navigate(R.AI) },
                 onReminders = { navController.navigate(R.REMINDERS) },
-                onSettings  = { navController.navigate(R.SETTINGS) }
+                onSettings  = { navController.navigate(R.SETTINGS) },
+                onSongs     = { navController.navigate(R.SONGS) }
             )
         }
         composable(R.PAGE, arguments = listOf(navArgument("dateKey") { type = NavType.StringType })) { back ->
