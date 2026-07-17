@@ -23,4 +23,6 @@ object AppModule {
     @Provides fun provideReminderDao(db: AppDatabase): ReminderDao = db.reminderDao()
     @Provides fun provideVersionHistoryDao(db: AppDatabase): VersionHistoryDao = db.versionHistoryDao()
     @Provides fun provideDrawingDao(db: AppDatabase): DrawingDao = db.drawingDao()
+    @Provides fun provideSongDao(db: AppDatabase): SongDao = db.songDao()
+    @Provides fun provideVoiceMessageDao(db: AppDatabase): VoiceMessageDao = db.voiceMessageDao()
 }
