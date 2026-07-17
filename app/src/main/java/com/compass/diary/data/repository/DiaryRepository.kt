@@ -15,7 +15,9 @@ class DiaryRepository @Inject constructor(
     private val starredDao: StarredDao,
     private val reminderDao: ReminderDao,
     private val versionHistoryDao: VersionHistoryDao,
-    private val drawingDao: DrawingDao
+    private val drawingDao: DrawingDao,
+    private val songDao: SongDao,
+    private val voiceMessageDao: VoiceMessageDao
 ) {
     companion object {
         private const val M_LOCK  = "\u2060L\u2060"
@@ -89,19 +91,34 @@ class DiaryRepository @Inject constructor(
         }
     }
 
-    // ── Starred backup/merge ────────────────────────────────────────
     suspend fun getAllStarredForBackup() = starredDao.getAllStarredForBackup()
 
-    /** Only ADDS stars that don't already exist locally (matched by date+content).
-     *  Note: unstarring on one device does not currently remove the star on other
-     *  devices — this merge is add-only, so a star survives cache-clear/reinstall
-     *  and shows up on every signed-in device, but deletions aren't (yet) propagated. */
     suspend fun mergeStarredFromBackup(items: List<StarredItemEntity>) {
         items.forEach { remote ->
             val existing = starredDao.findMatch(remote.diaryDateKey, remote.contentJson)
-            if (existing == null) {
-                starredDao.insertStarred(remote.copy(id = 0))
-            }
+            if (existing == null) starredDao.insertStarred(remote.copy(id = 0))
+        }
+    }
+
+    fun getAllSongs(): Flow<List<SongMessageEntity>> = songDao.getAllSongs()
+    suspend fun getAllSongsForBackup() = songDao.getAllSongsForBackup()
+    suspend fun addSong(song: SongMessageEntity): Long = songDao.insertSong(song)
+
+    suspend fun mergeSongsFromBackup(items: List<SongMessageEntity>) {
+        items.forEach { remote ->
+            val existing = songDao.findMatch(remote.youtubeUrl, remote.sender, remote.sentAt)
+            if (existing == null) songDao.insertSong(remote)
+        }
+    }
+
+    fun getAllVoiceMessages(): Flow<List<VoiceMessageEntity>> = voiceMessageDao.getAllVoiceMessages()
+    suspend fun getAllVoiceForBackup() = voiceMessageDao.getAllForBackup()
+    suspend fun addVoiceMessage(v: VoiceMessageEntity): Long = voiceMessageDao.insertVoice(v)
+
+    suspend fun mergeVoiceFromBackup(items: List<VoiceMessageEntity>) {
+        items.forEach { remote ->
+            val existing = voiceMessageDao.findMatch(remote.audioFileName)
+            if (existing == null) voiceMessageDao.insertVoice(remote)
         }
     }
 
