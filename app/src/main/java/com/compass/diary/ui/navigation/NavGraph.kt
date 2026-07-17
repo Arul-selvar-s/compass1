@@ -15,6 +15,7 @@ import com.compass.diary.ui.screens.songs.SongsScreen
 import com.compass.diary.ui.screens.splash.SplashScreen
 import com.compass.diary.ui.screens.starred.StarredScreen
 import com.compass.diary.ui.screens.unlock.UnlockSetupScreen
+import com.compass.diary.ui.screens.voice.VoiceScreen
 
 object R {
     const val SPLASH    = "splash"
@@ -29,6 +30,7 @@ object R {
     const val REMINDERS  = "reminders"
     const val SETTINGS   = "settings"
     const val SONGS      = "songs"
+    const val VOICE      = "voice"
     fun page(k: String) = "page/$k"
 }
 
@@ -56,7 +58,8 @@ fun CompassNavGraph(navController: NavHostController) {
                 onAI        = { navController.navigate(R.AI) },
                 onReminders = { navController.navigate(R.REMINDERS) },
                 onSettings  = { navController.navigate(R.SETTINGS) },
-                onSongs     = { navController.navigate(R.SONGS) }
+                onSongs     = { navController.navigate(R.SONGS) },
+                onVoice     = { navController.navigate(R.VOICE) }
             )
         }
         composable(R.PAGE, arguments = listOf(navArgument("dateKey") { type = NavType.StringType })) { back ->
@@ -73,5 +76,6 @@ fun CompassNavGraph(navController: NavHostController) {
         composable(R.REMINDERS) { RemindersScreen(onBack = { navController.popBackStack() }) }
         composable(R.SETTINGS)  { SettingsScreen(onBack = { navController.popBackStack() }, onLogout = { navController.navigate(R.COMPASS) { popUpTo(0) { inclusive = true } } }) }
         composable(R.SONGS)     { SongsScreen(onBack = { navController.popBackStack() }) }
+        composable(R.VOICE)     { VoiceScreen(onBack = { navController.popBackStack() }) }
     }
 }
