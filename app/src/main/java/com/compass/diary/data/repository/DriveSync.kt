@@ -2,6 +2,7 @@ package com.compass.diary.data.repository
 
 import android.content.Context
 import com.compass.diary.data.local.entity.DiaryEntryEntity
+import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.data.local.entity.StarredItemEntity
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -54,6 +55,7 @@ class DriveSync @Inject constructor(
             val tok = token()
             val entries = repo.getAllForBackup()
             val starred = repo.getAllStarredForBackup()
+            val songs   = repo.getAllSongsForBackup()
 
             val entryArr = JSONArray()
             entries.forEach { e ->
@@ -80,9 +82,20 @@ class DriveSync @Inject constructor(
                 })
             }
 
+            val songArr = JSONArray()
+            songs.forEach { s ->
+                songArr.put(JSONObject().apply {
+                    put("youtubeUrl", s.youtubeUrl)
+                    put("note",       s.note ?: JSONObject.NULL)
+                    put("sender",     s.sender)
+                    put("sentAt",     s.sentAt)
+                })
+            }
+
             val body = JSONObject().apply {
                 put("entries", entryArr)
                 put("starred", starredArr)
+                put("songs",   songArr)
             }.toString()
 
             val existingId = findFileId(tok)
@@ -128,6 +141,18 @@ class DriveSync @Inject constructor(
                 )
             }
             repo.mergeStarredFromBackup(starred)
+
+            val songArr = json.optJSONArray("songs") ?: JSONArray()
+            val songs = (0 until songArr.length()).map { i ->
+                val o = songArr.getJSONObject(i)
+                SongMessageEntity(
+                    youtubeUrl = o.getString("youtubeUrl"),
+                    note       = if (o.isNull("note")) null else o.optString("note"),
+                    sender     = o.getString("sender"),
+                    sentAt     = o.optLong("sentAt", System.currentTimeMillis())
+                )
+            }
+            repo.mergeSongsFromBackup(songs)
 
             Result.success(entries.size)
         } catch (e: Exception) {
