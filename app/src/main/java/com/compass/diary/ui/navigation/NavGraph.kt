@@ -14,6 +14,7 @@ import com.compass.diary.ui.screens.settings.SettingsScreen
 import com.compass.diary.ui.screens.splash.SplashScreen
 import com.compass.diary.ui.screens.starred.StarredScreen
 import com.compass.diary.ui.screens.unlock.UnlockSetupScreen
+import com.compass.diary.ui.screens.songs.SongsScreen
 
 object R {
     const val SPLASH    = "splash"
@@ -27,6 +28,7 @@ object R {
     const val AI         = "ai"
     const val REMINDERS  = "reminders"
     const val SETTINGS   = "settings"
+    const val SONGS      = "songs"
     fun page(k: String) = "page/$k"
 }
 
@@ -69,5 +71,6 @@ fun CompassNavGraph(navController: NavHostController) {
         composable(R.AI)        { AIAssistantScreen(onBack = { navController.popBackStack() }, onPage = { navController.navigate(R.page(it)) }) }
         composable(R.REMINDERS) { RemindersScreen(onBack = { navController.popBackStack() }) }
         composable(R.SETTINGS)  { SettingsScreen(onBack = { navController.popBackStack() }, onLogout = { navController.navigate(R.COMPASS) { popUpTo(0) { inclusive = true } } }) }
+        composable(R.SONGS)     { SongsScreen(onBack = { navController.popBackStack() }) }
     }
 }
