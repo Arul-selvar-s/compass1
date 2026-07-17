@@ -34,6 +34,7 @@ fun DiaryHomeScreen(
     onReminders: () -> Unit,
     onSettings: () -> Unit,
     onSongs: () -> Unit,
+    onVoice: () -> Unit,
     viewModel: DiaryViewModel = hiltViewModel()
 ) {
     val entries       by viewModel.allEntries.collectAsState()
@@ -87,6 +88,7 @@ fun DiaryHomeScreen(
                     Triple(Icons.Default.CalendarMonth, "Calendar", onCalendar),
                     Triple(Icons.Default.Star, "Starred", onStarred),
                     Triple(Icons.Default.MusicNote, "Songs", onSongs),
+                    Triple(Icons.Default.Mic, "Voice", onVoice),
                     Triple(Icons.Default.AutoAwesome, "AI", onAI),
                     Triple(Icons.Default.Notifications, "Reminders", onReminders)
                 ).forEach { (icon, label, action) ->
