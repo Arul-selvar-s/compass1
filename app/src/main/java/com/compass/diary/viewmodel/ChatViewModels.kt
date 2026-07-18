@@ -42,7 +42,7 @@ class SongViewModel @Inject constructor(
         }
     }
 
-    fun sendSong(url: String, note: String?, sender: String) {
+    fun sendSong(url: String, note: String?, sender: String, sentAt: Long = System.currentTimeMillis()) {
         val cleanUrl = url.trim()
         if (cleanUrl.isBlank()) return
         viewModelScope.launch {
@@ -50,7 +50,8 @@ class SongViewModel @Inject constructor(
                 SongMessageEntity(
                     youtubeUrl = cleanUrl,
                     note       = note?.trim()?.ifBlank { null },
-                    sender     = sender
+                    sender     = sender,
+                    sentAt     = sentAt
                 )
             )
             scheduleSync()
@@ -77,6 +78,9 @@ class VoiceViewModel @Inject constructor(
 
     private val _playingId = MutableStateFlow<Long?>(null)
     val playingId: StateFlow<Long?> = _playingId
+
+    private val _importError = MutableStateFlow<String?>(null)
+    val importError: StateFlow<String?> = _importError
 
     private var recorder: MediaRecorder? = null
     private var recordingFile: File? = null
@@ -106,7 +110,7 @@ class VoiceViewModel @Inject constructor(
         }
     }
 
-    fun stopRecordingAndSave(note: String?) {
+    fun stopRecordingAndSave(note: String?, sentAt: Long = System.currentTimeMillis()) {
         val file = recordingFile
         try { recorder?.stop() } catch (e: Exception) { /* ignore */ }
         try { recorder?.release() } catch (e: Exception) { /* ignore */ }
@@ -121,7 +125,8 @@ class VoiceViewModel @Inject constructor(
                         audioFileName = file.name,
                         note          = note?.trim()?.ifBlank { null },
                         durationMs    = duration,
-                        sourceType    = "RECORDED"
+                        sourceType    = "RECORDED",
+                        sentAt        = sentAt
                     )
                 )
                 scheduleSync()
@@ -139,28 +144,33 @@ class VoiceViewModel @Inject constructor(
         recordingFile = null
     }
 
-    fun importAudio(uri: Uri, note: String?) {
+    fun importAudio(uri: Uri, note: String?, sentAt: Long = System.currentTimeMillis()) {
         viewModelScope.launch {
             _isProcessing.value = true
+            _importError.value = null
             val outFile = File(voiceDir(), "voice_${System.currentTimeMillis()}.m4a")
-            val ok = AudioCompressor.compressToAac(context, uri, outFile)
-            if (ok && outFile.exists() && outFile.length() > 0) {
+            val error = AudioCompressor.compressToAac(context, uri, outFile)
+            if (error == null && outFile.exists() && outFile.length() > 0) {
                 val duration = durationOf(outFile)
                 repo.addVoiceMessage(
                     VoiceMessageEntity(
                         audioFileName = outFile.name,
                         note          = note?.trim()?.ifBlank { null },
                         durationMs    = duration,
-                        sourceType    = "IMPORTED"
+                        sourceType    = "IMPORTED",
+                        sentAt        = sentAt
                     )
                 )
                 scheduleSync()
             } else {
                 outFile.delete()
+                _importError.value = error ?: "Import failed — unknown error"
             }
             _isProcessing.value = false
         }
     }
+
+    fun clearImportError() { _importError.value = null }
 
     private fun durationOf(file: File): Long = try {
         val retriever = MediaMetadataRetriever()
