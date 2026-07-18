@@ -45,11 +45,12 @@ class SongViewModel @Inject constructor(
     fun sendSong(url: String, note: String?, sender: String, sentAt: Long = System.currentTimeMillis()) {
         val cleanUrl = url.trim()
         if (cleanUrl.isBlank()) return
+        val cleanNote: String? = note?.trim()?.takeIf { it.isNotBlank() }
         viewModelScope.launch {
             repo.addSong(
                 SongMessageEntity(
                     youtubeUrl = cleanUrl,
-                    note       = note?.trim()?.ifBlank { null },
+                    note       = cleanNote,
                     sender     = sender,
                     sentAt     = sentAt
                 )
@@ -117,13 +118,15 @@ class VoiceViewModel @Inject constructor(
         recorder = null
         _isRecording.value = false
 
+        val cleanNote: String? = note?.trim()?.takeIf { it.isNotBlank() }
+
         if (file != null && file.exists() && file.length() > 0) {
             viewModelScope.launch {
                 val duration = durationOf(file)
                 repo.addVoiceMessage(
                     VoiceMessageEntity(
                         audioFileName = file.name,
-                        note          = note?.trim()?.ifBlank { null },
+                        note          = cleanNote,
                         durationMs    = duration,
                         sourceType    = "RECORDED",
                         sentAt        = sentAt
@@ -144,7 +147,9 @@ class VoiceViewModel @Inject constructor(
         recordingFile = null
     }
 
+    /** Imports always go through AudioCompressor — enforces the "always compress" rule. */
     fun importAudio(uri: Uri, note: String?, sentAt: Long = System.currentTimeMillis()) {
+        val cleanNote: String? = note?.trim()?.takeIf { it.isNotBlank() }
         viewModelScope.launch {
             _isProcessing.value = true
             _importError.value = null
@@ -155,7 +160,7 @@ class VoiceViewModel @Inject constructor(
                 repo.addVoiceMessage(
                     VoiceMessageEntity(
                         audioFileName = outFile.name,
-                        note          = note?.trim()?.ifBlank { null },
+                        note          = cleanNote,
                         durationMs    = duration,
                         sourceType    = "IMPORTED",
                         sentAt        = sentAt
