@@ -7,7 +7,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,7 +26,32 @@ import com.compass.diary.data.local.entity.VoiceMessageEntity
 import com.compass.diary.ui.theme.CompassColors
 import com.compass.diary.viewmodel.VoiceViewModel
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.util.*
+
+private fun localDateOf(millis: Long): LocalDate =
+    Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
+
+private fun dateLabel(millis: Long): String {
+    val date = localDateOf(millis)
+    val today = LocalDate.now()
+    return when {
+        date == today -> "Today"
+        date == today.minusDays(1) -> "Yesterday"
+        else -> date.format(DateTimeFormatter.ofPattern("d MMMM yyyy"))
+    }
+}
+
+private fun combineDateWithNow(dateMillisUtc: Long): Long {
+    val selectedDate = Instant.ofEpochMilli(dateMillisUtc).atZone(ZoneOffset.UTC).toLocalDate()
+    val now = LocalTime.now()
+    return selectedDate.atTime(now).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,17 +59,23 @@ fun VoiceScreen(
     onBack: () -> Unit,
     viewModel: VoiceViewModel = hiltViewModel()
 ) {
-    val messages    by viewModel.messages.collectAsState()
-    val isRecording by viewModel.isRecording.collectAsState()
+    val messages     by viewModel.messages.collectAsState()
+    val isRecording  by viewModel.isRecording.collectAsState()
     val isProcessing by viewModel.isProcessing.collectAsState()
-    val playingId   by viewModel.playingId.collectAsState()
-    val context     = LocalContext.current
-    val timeFmt     = remember { SimpleDateFormat("dd MMM, h:mm a", Locale.getDefault()) }
+    val playingId    by viewModel.playingId.collectAsState()
+    val importError  by viewModel.importError.collectAsState()
+    val context      = LocalContext.current
+    val timeFmt       = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
+    val fullDateFmt   = remember { SimpleDateFormat("dd MMM, h:mm a", Locale.getDefault()) }
 
     var pendingNote by remember { mutableStateOf("") }
     var showRecordSheet by remember { mutableStateOf(false) }
     var showImportSheet by remember { mutableStateOf(false) }
     var pendingImportUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var selectedDateMillis by remember { mutableStateOf<Long?>(null) }
+    var showDatePicker by remember { mutableStateOf(false) }
+
+    fun effectiveSentAt(): Long = selectedDateMillis?.let { combineDateWithNow(it) } ?: System.currentTimeMillis()
 
     val micPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -70,19 +100,19 @@ fun VoiceScreen(
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 title = { Text("Voice Messages", fontWeight = FontWeight.Bold) },
                 actions = {
-                    IconButton(onClick = { importLauncher.launch(arrayOf("audio/*")) }) {
+                    IconButton(onClick = { selectedDateMillis = null; importLauncher.launch(arrayOf("audio/*")) }) {
                         Icon(Icons.Default.UploadFile, "Import audio")
                     }
                 }
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { requestRecord() }, containerColor = CompassColors.Blue600) {
+            FloatingActionButton(onClick = { selectedDateMillis = null; requestRecord() }, containerColor = CompassColors.Blue600) {
                 Icon(Icons.Default.Mic, "Record", tint = Color.White)
             }
         }
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Column(Modifier.fillMaxSize().padding(padding)) {
             if (isProcessing) {
                 Row(
                     Modifier.fillMaxWidth().background(CompassColors.Blue800).padding(12.dp),
@@ -94,24 +124,51 @@ fun VoiceScreen(
                 }
             }
 
-            if (messages.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.Mic, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(8.dp))
-                        Text("No voice messages yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Tap the mic to record, or import an audio file",
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (importError != null) {
+                Row(
+                    Modifier.fillMaxWidth().background(CompassColors.Error.copy(alpha = 0.15f)).padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Error, null, Modifier.size(18.dp), tint = CompassColors.Error)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "Import failed: ${importError}",
+                        color = CompassColors.Error,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { viewModel.clearImportError() }, Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Close, "Dismiss", Modifier.size(16.dp), tint = CompassColors.Error)
                     }
                 }
-            } else {
-                LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(messages, key = { it.id }) { msg ->
-                        VoiceCard(msg, isPlaying = playingId == msg.id, timeFmt = timeFmt) {
-                            viewModel.togglePlay(msg)
+            }
+
+            Box(Modifier.fillMaxSize()) {
+                if (messages.isEmpty()) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.Mic, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(8.dp))
+                            Text("No voice messages yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Tap the mic to record, or import an audio file",
+                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        messages.forEachIndexed { index, msg ->
+                            val showDate = index == 0 || localDateOf(messages[index - 1].sentAt) != localDateOf(msg.sentAt)
+                            if (showDate) {
+                                item(key = "date_${msg.id}") { DatePill(dateLabel(msg.sentAt)) }
+                            }
+                            item(key = msg.id) {
+                                VoiceCard(msg, isPlaying = playingId == msg.id, timeFmt = timeFmt) {
+                                    viewModel.togglePlay(msg)
+                                }
+                            }
                         }
                     }
                 }
@@ -125,7 +182,13 @@ fun VoiceScreen(
                 Icon(Icons.Default.Mic, null, Modifier.size(48.dp), tint = CompassColors.Error)
                 Spacer(Modifier.height(12.dp))
                 Text(if (isRecording) "Recording…" else "Ready", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(16.dp))
+                AssistChip(
+                    onClick = { showDatePicker = true },
+                    label = { Text(selectedDateMillis?.let { localDateOf(combineDateWithNow(it)).format(DateTimeFormatter.ofPattern("d MMM yyyy")) } ?: "Today") },
+                    leadingIcon = { Icon(Icons.Default.CalendarMonth, null, Modifier.size(16.dp)) }
+                )
+                Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = pendingNote,
                     onValueChange = { pendingNote = it },
@@ -136,11 +199,14 @@ fun VoiceScreen(
                 Spacer(Modifier.height(20.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(
-                        onClick = { viewModel.cancelRecording(); showRecordSheet = false; pendingNote = "" },
+                        onClick = { viewModel.cancelRecording(); showRecordSheet = false; pendingNote = ""; selectedDateMillis = null },
                         modifier = Modifier.weight(1f)
                     ) { Text("Cancel") }
                     Button(
-                        onClick = { viewModel.stopRecordingAndSave(pendingNote); showRecordSheet = false; pendingNote = "" },
+                        onClick = {
+                            viewModel.stopRecordingAndSave(pendingNote, effectiveSentAt())
+                            showRecordSheet = false; pendingNote = ""; selectedDateMillis = null
+                        },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = CompassColors.Blue600)
                     ) { Text("Stop & Save") }
@@ -158,7 +224,13 @@ fun VoiceScreen(
                 Text("Import this audio file", style = MaterialTheme.typography.titleMedium)
                 Text("It will be compressed automatically", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(16.dp))
+                AssistChip(
+                    onClick = { showDatePicker = true },
+                    label = { Text(selectedDateMillis?.let { localDateOf(combineDateWithNow(it)).format(DateTimeFormatter.ofPattern("d MMM yyyy")) } ?: "Today") },
+                    leadingIcon = { Icon(Icons.Default.CalendarMonth, null, Modifier.size(16.dp)) }
+                )
+                Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = pendingNote,
                     onValueChange = { pendingNote = it },
@@ -169,14 +241,36 @@ fun VoiceScreen(
                 Spacer(Modifier.height(20.dp))
                 Button(
                     onClick = {
-                        pendingImportUri?.let { viewModel.importAudio(it, pendingNote) }
-                        showImportSheet = false; pendingNote = ""; pendingImportUri = null
+                        pendingImportUri?.let { viewModel.importAudio(it, pendingNote, effectiveSentAt()) }
+                        showImportSheet = false; pendingNote = ""; pendingImportUri = null; selectedDateMillis = null
                     },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = CompassColors.Blue600)
                 ) { Text("Import & Compress") }
                 Spacer(Modifier.height(16.dp))
             }
+        }
+    }
+
+    if (showDatePicker) {
+        val state = rememberDatePickerState(initialSelectedDateMillis = selectedDateMillis ?: System.currentTimeMillis())
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = { selectedDateMillis = state.selectedDateMillis; showDatePicker = false }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } }
+        ) { DatePicker(state = state) }
+    }
+}
+
+@Composable
+private fun DatePill(label: String) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp)) {
+            Text(label, style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
         }
     }
 }
