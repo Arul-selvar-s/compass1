@@ -22,7 +22,7 @@ import java.util.*
 @Composable
 fun StarredScreen(onPage: (String) -> Unit, onBack: () -> Unit, viewModel: DiaryViewModel = hiltViewModel()) {
     val starred by viewModel.allStarred.collectAsState()
-    val df = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
+    val df = remember { SimpleDateFormat("dd MMM yyyy, h:mm a", Locale.getDefault()) }
 
     Scaffold(
         topBar = {
