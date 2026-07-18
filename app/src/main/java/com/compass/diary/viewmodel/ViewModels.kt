@@ -10,6 +10,8 @@ import com.compass.diary.util.AutoSaveManager
 import com.compass.diary.util.CompassSensorManager
 import com.compass.diary.util.PreferencesManager
 import com.compass.diary.util.SaveState
+import com.compass.diary.util.UpdateChecker
+import com.compass.diary.util.UpdateInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -267,12 +269,10 @@ class DiaryViewModel @Inject constructor(
         }
     }
 
-    
     fun removeStarred(id: Long) {
         viewModelScope.launch {
             repo.removeStarred(id)
-            driveSync.uploadAll()  // push the deletion to Drive immediately, so the next
-                                    // auto-poll doesn't pull the old copy back and revive it
+            driveSync.uploadAll()
         }
     }
 
@@ -304,7 +304,8 @@ class DiaryViewModel @Inject constructor(
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val prefs: PreferencesManager,
-    private val driveSync: DriveSync
+    private val driveSync: DriveSync,
+    private val updateChecker: UpdateChecker
 ) : ViewModel() {
 
     val darkMode: StateFlow<String>          = prefs.darkMode.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "SYSTEM")
@@ -342,6 +343,28 @@ class SettingsViewModel @Inject constructor(
     fun logout() {
         viewModelScope.launch { prefs.setGoogleAccount(null); prefs.setSetupComplete(false) }
     }
+
+    private val _updateInfo = MutableStateFlow<UpdateInfo?>(null)
+    val updateInfo: StateFlow<UpdateInfo?> = _updateInfo
+    private val _checkingUpdate = MutableStateFlow(false)
+    val checkingUpdate: StateFlow<Boolean> = _checkingUpdate
+    private val _updateCheckMessage = MutableStateFlow<String?>(null)
+    val updateCheckMessage: StateFlow<String?> = _updateCheckMessage
+
+    fun checkForUpdate() {
+        viewModelScope.launch {
+            _checkingUpdate.value = true
+            _updateCheckMessage.value = null
+            updateChecker.checkForUpdate().fold(
+                onSuccess = { info ->
+                    _updateInfo.value = info
+                    if (info == null) _updateCheckMessage.value = "You're up to date"
+                },
+                onFailure = { _updateCheckMessage.value = "Couldn't check: ${it.message}" }
+            )
+            _checkingUpdate.value = false
+        }
+    }
 }
 
 @HiltViewModel
@@ -350,7 +373,6 @@ class AIViewModel @Inject constructor(
     private val repo: DiaryRepository
 ) : ViewModel() {
 
-    
     data class Message(
         val id: String = UUID.randomUUID().toString(),
         val role: String,
