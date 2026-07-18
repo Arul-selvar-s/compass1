@@ -25,4 +25,5 @@ object AppModule {
     @Provides fun provideDrawingDao(db: AppDatabase): DrawingDao = db.drawingDao()
     @Provides fun provideSongDao(db: AppDatabase): SongDao = db.songDao()
     @Provides fun provideVoiceMessageDao(db: AppDatabase): VoiceMessageDao = db.voiceMessageDao()
+    @Provides fun provideNoteDao(db: AppDatabase): NoteDao = db.noteDao()
 }
