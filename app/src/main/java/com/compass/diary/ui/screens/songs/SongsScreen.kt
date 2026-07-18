@@ -7,15 +7,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,13 +24,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.ui.theme.CompassColors
 import com.compass.diary.viewmodel.SongViewModel
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.util.*
 
 private const val SENDER_JENMASANI = "JENMASANI"
@@ -43,26 +48,41 @@ private val YOUTUBE_REGEX = Regex(
 
 private fun isValidYoutubeUrl(url: String) = YOUTUBE_REGEX.containsMatchIn(url)
 
-private fun extractVideoId(url: String): String {
-    return try {
-        val uri = Uri.parse(url)
-        when {
-            uri.host?.contains("youtu.be") == true -> uri.lastPathSegment ?: url
-            uri.path?.contains("/shorts/") == true -> uri.lastPathSegment ?: url
-            else -> uri.getQueryParameter("v") ?: url
-        }
-    } catch (e: Exception) { url }
-}
+private fun extractVideoId(url: String): String = try {
+    val uri = Uri.parse(url)
+    when {
+        uri.host?.contains("youtu.be") == true -> uri.lastPathSegment ?: url
+        uri.path?.contains("/shorts/") == true -> uri.lastPathSegment ?: url
+        else -> uri.getQueryParameter("v") ?: url
+    }
+} catch (e: Exception) { url }
 
 private fun openYoutube(context: Context, url: String) {
     try {
-        val appIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-            setPackage("com.google.android.youtube")
-        }
+        val appIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { setPackage("com.google.android.youtube") }
         context.startActivity(appIntent)
     } catch (e: Exception) {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
     }
+}
+
+private fun localDateOf(millis: Long): LocalDate =
+    Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
+
+private fun dateLabel(millis: Long): String {
+    val date = localDateOf(millis)
+    val today = LocalDate.now()
+    return when {
+        date == today -> "Today"
+        date == today.minusDays(1) -> "Yesterday"
+        else -> date.format(DateTimeFormatter.ofPattern("d MMMM yyyy"))
+    }
+}
+
+private fun combineDateWithNow(dateMillisUtc: Long): Long {
+    val selectedDate = Instant.ofEpochMilli(dateMillisUtc).atZone(ZoneOffset.UTC).toLocalDate()
+    val now = LocalTime.now()
+    return selectedDate.atTime(now).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -79,16 +99,19 @@ fun SongsScreen(
 
     var urlInput by remember { mutableStateOf("") }
     var noteInput by remember { mutableStateOf("") }
+    var selectedDateMillis by remember { mutableStateOf<Long?>(null) }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     LaunchedEffect(songs.size) {
         if (songs.isNotEmpty()) scope.launch { listState.animateScrollToItem(songs.size - 1) }
     }
 
+    fun effectiveSentAt(): Long = selectedDateMillis?.let { combineDateWithNow(it) } ?: System.currentTimeMillis()
+
     fun send(sender: String) {
         if (!isValidYoutubeUrl(urlInput)) return
-        viewModel.sendSong(urlInput, noteInput, sender)
-        urlInput = ""
-        noteInput = ""
+        viewModel.sendSong(urlInput, noteInput, sender, effectiveSentAt())
+        urlInput = ""; noteInput = ""; selectedDateMillis = null
     }
 
     Scaffold(
@@ -99,7 +122,7 @@ fun SongsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Avatar("Y", CompassColors.Gold400)
                         Spacer(Modifier.width(4.dp))
-                        Avatar("A", CompassColors.Blue400, overlap = true)
+                        Avatar("A", CompassColors.Blue400)
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text("Songs", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
@@ -111,26 +134,24 @@ fun SongsScreen(
             )
         },
         bottomBar = {
-            Column(
-                Modifier.fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(12.dp)
-            ) {
+            Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(12.dp)) {
                 OutlinedTextField(
-                    value = urlInput,
-                    onValueChange = { urlInput = it },
-                    placeholder = { Text("Paste a YouTube link…") },
-                    singleLine = true,
+                    value = urlInput, onValueChange = { urlInput = it },
+                    placeholder = { Text("Paste a YouTube link…") }, singleLine = true,
                     isError = urlInput.isNotBlank() && !isValidYoutubeUrl(urlInput),
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(6.dp))
                 OutlinedTextField(
-                    value = noteInput,
-                    onValueChange = { noteInput = it },
-                    placeholder = { Text("Add a note (optional)") },
-                    singleLine = true,
+                    value = noteInput, onValueChange = { noteInput = it },
+                    placeholder = { Text("Add a note (optional)") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(6.dp))
+                AssistChip(
+                    onClick = { showDatePicker = true },
+                    label = { Text(selectedDateMillis?.let { localDateOf(combineDateWithNow(it)).format(DateTimeFormatter.ofPattern("d MMM yyyy")) } ?: "Today") },
+                    leadingIcon = { Icon(Icons.Default.CalendarMonth, null, Modifier.size(16.dp)) }
                 )
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -140,7 +161,7 @@ fun SongsScreen(
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = CompassColors.Gold400)
                     ) {
-                        Icon(Icons.Default.Send, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp))
+                        Icon(Icons.AutoMirrored.Filled.Send, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp))
                         Text("Send as Jenmasani")
                     }
                     Button(
@@ -149,7 +170,7 @@ fun SongsScreen(
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = CompassColors.Blue400)
                     ) {
-                        Icon(Icons.Default.Send, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp))
+                        Icon(Icons.AutoMirrored.Filled.Send, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp))
                         Text("Send as Kutty Golu")
                     }
                 }
@@ -171,22 +192,48 @@ fun SongsScreen(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(songs, key = { it.id }) { song ->
-                    SongBubble(song, timeFmt) { openYoutube(context, song.youtubeUrl) }
+                songs.forEachIndexed { index, song ->
+                    val showDate = index == 0 || localDateOf(songs[index - 1].sentAt) != localDateOf(song.sentAt)
+                    if (showDate) {
+                        item(key = "date_${song.id}") { DatePill(dateLabel(song.sentAt)) }
+                    }
+                    item(key = song.id) {
+                        SongBubble(song, timeFmt) { openYoutube(context, song.youtubeUrl) }
+                    }
                 }
             }
+        }
+    }
+
+    if (showDatePicker) {
+        val state = rememberDatePickerState(initialSelectedDateMillis = selectedDateMillis ?: System.currentTimeMillis())
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    selectedDateMillis = state.selectedDateMillis
+                    showDatePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } }
+        ) { DatePicker(state = state) }
+    }
+}
+
+@Composable
+private fun DatePill(label: String) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp)) {
+            Text(label, style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
         }
     }
 }
 
 @Composable
-private fun Avatar(letter: String, color: Color, overlap: Boolean = false) {
-    Box(
-        Modifier.size(32.dp)
-            .then(if (overlap) Modifier.padding(start = 0.dp) else Modifier)
-            .background(color, CircleShape),
-        contentAlignment = Alignment.Center
-    ) {
+private fun Avatar(letter: String, color: Color) {
+    Box(Modifier.size(32.dp).background(color, CircleShape), contentAlignment = Alignment.Center) {
         Text(letter, fontWeight = FontWeight.Bold, color = Color.White)
     }
 }
@@ -199,15 +246,11 @@ private fun SongBubble(song: SongMessageEntity, timeFmt: SimpleDateFormat, onOpe
     val avatarColor = if (isRight) CompassColors.Gold400 else CompassColors.Blue400
     val senderLabel = if (isRight) "Jenmasani" else "Kutty Golu"
 
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isRight) Arrangement.End else Arrangement.Start
-    ) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (isRight) Arrangement.End else Arrangement.Start) {
         if (!isRight) { Avatar(avatarLetter, avatarColor); Spacer(Modifier.width(8.dp)) }
 
         Column(
-            modifier = Modifier
-                .widthIn(max = 280.dp)
+            modifier = Modifier.widthIn(max = 280.dp)
                 .background(bubbleColor, RoundedCornerShape(14.dp))
                 .clickable { onOpen() }
                 .padding(12.dp)
