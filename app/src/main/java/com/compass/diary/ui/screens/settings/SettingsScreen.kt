@@ -1,5 +1,7 @@
 package com.compass.diary.ui.screens.settings
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -11,11 +13,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.compass.diary.BuildConfig
 import com.compass.diary.ui.theme.CompassColors
 import com.compass.diary.viewmodel.SettingsViewModel
 
@@ -24,6 +28,8 @@ import com.compass.diary.viewmodel.SettingsViewModel
 fun SettingsScreen(
     onBack: () -> Unit,
     onLogout: () -> Unit,
+    onAI: () -> Unit,
+    onReminders: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val darkMode    by viewModel.darkMode.collectAsState()
@@ -34,6 +40,10 @@ fun SettingsScreen(
     val lastSync    by viewModel.lastSyncLabel.collectAsState()
     val apiKey      by viewModel.anthropicApiKey.collectAsState()
     var showApiDlg  by remember { mutableStateOf(false) }
+    val updateInfo  by viewModel.updateInfo.collectAsState()
+    val checkingUpd by viewModel.checkingUpdate.collectAsState()
+    val updateMsg   by viewModel.updateCheckMessage.collectAsState()
+    val context     = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -73,6 +83,16 @@ fun SettingsScreen(
                 SRow(Icons.Default.CloudUpload, "Sync now",
                     subtitle = syncStatus.ifBlank { "Upload all entries to Drive" },
                     onClick = viewModel::syncNow)
+            }
+
+            Section("Tools") {
+                SRow(Icons.Default.AutoAwesome, "AI Assistant",
+                    subtitle = "Ask questions about your diary",
+                    onClick = onAI)
+                Div()
+                SRow(Icons.Default.Notifications, "Reminders",
+                    subtitle = "Manage your reminders",
+                    onClick = onReminders)
             }
 
             Section("Security") {
@@ -135,7 +155,40 @@ fun SettingsScreen(
             }
 
             Section("About") {
-                SRow(Icons.Default.Info, "Compass", subtitle = "Version 1.0  •  No ads  •  No tracking", onClick = {})
+                SRow(Icons.Default.Info, "Compass", subtitle = "Version ${BuildConfig.VERSION_NAME}  •  No ads  •  No tracking", onClick = {})
+                Div()
+                SRow(
+                    Icons.Default.SystemUpdate,
+                    "Check for updates",
+                    subtitle = when {
+                        checkingUpd -> "Checking…"
+                        updateMsg != null -> updateMsg!!
+                        else -> "Tap to check GitHub for a newer version"
+                    },
+                    onClick = { viewModel.checkForUpdate() }
+                )
+                if (updateInfo != null) {
+                    Div()
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clickable {
+                                val url = updateInfo!!.downloadUrl.ifBlank { updateInfo!!.releaseUrl }
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                            }
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.CloudDownload, null, Modifier.size(22.dp), tint = CompassColors.Gold400)
+                        Spacer(Modifier.width(16.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Update available: ${updateInfo!!.versionName}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium, color = CompassColors.Gold400)
+                            Text("Tap to download", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
                 Div()
                 SRow(Icons.Default.Lock, "Privacy", subtitle = "All data stored locally and on your own Google Drive", onClick = {})
             }
