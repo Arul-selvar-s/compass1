@@ -55,8 +55,6 @@ fun CompassNavGraph(navController: NavHostController) {
                 onCalendar  = { navController.navigate(R.CALENDAR) },
                 onStarred   = { navController.navigate(R.STARRED) },
                 onSearch    = { navController.navigate(R.SEARCH) },
-                onAI        = { navController.navigate(R.AI) },
-                onReminders = { navController.navigate(R.REMINDERS) },
                 onSettings  = { navController.navigate(R.SETTINGS) },
                 onSongs     = { navController.navigate(R.SONGS) },
                 onVoice     = { navController.navigate(R.VOICE) }
@@ -74,7 +72,14 @@ fun CompassNavGraph(navController: NavHostController) {
         composable(R.SEARCH)    { SearchScreen(onPage = { navController.navigate(R.page(it)) }, onBack = { navController.popBackStack() }) }
         composable(R.AI)        { AIAssistantScreen(onBack = { navController.popBackStack() }, onPage = { navController.navigate(R.page(it)) }) }
         composable(R.REMINDERS) { RemindersScreen(onBack = { navController.popBackStack() }) }
-        composable(R.SETTINGS)  { SettingsScreen(onBack = { navController.popBackStack() }, onLogout = { navController.navigate(R.COMPASS) { popUpTo(0) { inclusive = true } } }) }
+        composable(R.SETTINGS)  {
+            SettingsScreen(
+                onBack      = { navController.popBackStack() },
+                onLogout    = { navController.navigate(R.COMPASS) { popUpTo(0) { inclusive = true } } },
+                onAI        = { navController.navigate(R.AI) },
+                onReminders = { navController.navigate(R.REMINDERS) }
+            )
+        }
         composable(R.SONGS)     { SongsScreen(onBack = { navController.popBackStack() }) }
         composable(R.VOICE)     { VoiceScreen(onBack = { navController.popBackStack() }) }
     }
