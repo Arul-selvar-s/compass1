@@ -2,6 +2,7 @@ package com.compass.diary.data.repository
 
 import android.content.Context
 import com.compass.diary.data.local.entity.DiaryEntryEntity
+import com.compass.diary.data.local.entity.NoteMessageEntity
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.data.local.entity.StarredItemEntity
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -56,6 +57,7 @@ class DriveSync @Inject constructor(
             val entries = repo.getAllForBackup()
             val starred = repo.getAllStarredForBackup()
             val songs   = repo.getAllSongsForBackup()
+            val notes   = repo.getAllNotesForBackup()
 
             val entryArr = JSONArray()
             entries.forEach { e ->
@@ -92,10 +94,20 @@ class DriveSync @Inject constructor(
                 })
             }
 
+            val noteArr = JSONArray()
+            notes.forEach { n ->
+                noteArr.put(JSONObject().apply {
+                    put("dateKey", n.dateKey)
+                    put("text",    n.text)
+                    put("sentAt",  n.sentAt)
+                })
+            }
+
             val body = JSONObject().apply {
                 put("entries", entryArr)
                 put("starred", starredArr)
                 put("songs",   songArr)
+                put("notes",   noteArr)
             }.toString()
 
             val existingId = findFileId(tok)
@@ -153,6 +165,17 @@ class DriveSync @Inject constructor(
                 )
             }
             repo.mergeSongsFromBackup(songs)
+
+            val noteArr = json.optJSONArray("notes") ?: JSONArray()
+            val notes = (0 until noteArr.length()).map { i ->
+                val o = noteArr.getJSONObject(i)
+                NoteMessageEntity(
+                    dateKey = o.getString("dateKey"),
+                    text    = o.getString("text"),
+                    sentAt  = o.optLong("sentAt", System.currentTimeMillis())
+                )
+            }
+            repo.mergeNotesFromBackup(notes)
 
             Result.success(entries.size)
         } catch (e: Exception) {
