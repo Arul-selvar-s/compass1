@@ -26,4 +26,5 @@ object AppModule {
     @Provides fun provideSongDao(db: AppDatabase): SongDao = db.songDao()
     @Provides fun provideVoiceMessageDao(db: AppDatabase): VoiceMessageDao = db.voiceMessageDao()
     @Provides fun provideNoteDao(db: AppDatabase): NoteDao = db.noteDao()
+    @Provides fun providePhotoDao(db: AppDatabase): PhotoDao = db.photoDao()
 }
