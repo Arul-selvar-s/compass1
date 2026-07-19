@@ -31,19 +31,6 @@ import java.util.*
 import javax.inject.Inject
 import kotlin.math.abs
 
-private const val VM_M_LOCK  = "\u2060L\u2060"
-private const val VM_M_DRAFT = "\u2060D\u2060"
-private const val VM_M_SPANS = "\u2060S\u2060"
-
-private fun extractPlainText(raw: String): String {
-    if (!raw.contains(VM_M_LOCK)) return raw.trim()
-    return try {
-        val locked = raw.substringAfter(VM_M_LOCK).substringBefore(VM_M_DRAFT)
-        val draft  = raw.substringAfter(VM_M_DRAFT, "").substringBefore(VM_M_SPANS)
-        listOf(locked, draft).filter { it.isNotBlank() }.joinToString("\n").trim()
-    } catch (e: Exception) { raw.trim() }
-}
-
 @HiltViewModel
 class CompassViewModel @Inject constructor(
     private val sensor: CompassSensorManager,
@@ -110,7 +97,7 @@ class SetupViewModel @Inject constructor(
                     kotlinx.coroutines.delay(2000); goToStep(3)
                 },
                 onFailure = {
-                    _driveStatus.value = "Connected ✓ — will sync when you tap Save & Lock"
+                    _driveStatus.value = "Connected ✓ — will sync when you send your first message"
                     kotlinx.coroutines.delay(2000); goToStep(3)
                 }
             )
@@ -175,8 +162,6 @@ class DiaryViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
-        viewModelScope.launch { repo.autoLockPastEntries() }
-
         viewModelScope.launch {
             while (true) {
                 val account = prefs.googleAccount.first()
@@ -230,29 +215,16 @@ class DiaryViewModel @Inject constructor(
         viewModelScope.launch { repo.ensureEntry(dateKey) }
     }
 
-    fun onContentChanged(dateKey: String, contentJson: String) {
-        val plain = extractPlainText(contentJson)
-        autoSave.onContentChanged { repo.saveContent(dateKey, contentJson, plain) }
-        scheduleSync()
-    }
+    fun notesForDate(dateKey: String) = repo.getNoteMessages(dateKey)
 
-    fun forceSave(dateKey: String, contentJson: String) {
+    fun sendNote(dateKey: String, text: String) {
         viewModelScope.launch {
-            val plain = extractPlainText(contentJson)
-            autoSave.forceSave { repo.saveContent(dateKey, contentJson, plain) }
+            repo.addNoteMessage(dateKey, text)
             scheduleSync()
         }
     }
 
-    fun saveAndLock(dateKey: String, contentJson: String) {
-        viewModelScope.launch {
-            val plain = extractPlainText(contentJson)
-            repo.saveContent(dateKey, contentJson, plain)
-            driveSync.uploadAll()
-        }
-    }
-
-    fun starContent(dateKey: String, text: String) {
+    fun starNoteMessage(dateKey: String, text: String) {
         viewModelScope.launch {
             repo.addStarred(StarredItemEntity(
                 diaryDateKey = dateKey, contentType = "TEXT",
@@ -273,13 +245,6 @@ class DiaryViewModel @Inject constructor(
         viewModelScope.launch {
             repo.removeStarred(id)
             driveSync.uploadAll()
-        }
-    }
-
-    fun saveDrawing(dateKey: String, pathsJson: String) {
-        viewModelScope.launch {
-            repo.saveDrawing(DrawingEntity(diaryDateKey = dateKey, pathsJson = pathsJson, width = 1080, height = 1920))
-            scheduleSync()
         }
     }
 
