@@ -17,14 +17,9 @@ class DiaryRepository @Inject constructor(
     private val versionHistoryDao: VersionHistoryDao,
     private val drawingDao: DrawingDao,
     private val songDao: SongDao,
-    private val voiceMessageDao: VoiceMessageDao
+    private val voiceMessageDao: VoiceMessageDao,
+    private val noteDao: NoteDao
 ) {
-    companion object {
-        private const val M_LOCK  = "\u2060L\u2060"
-        private const val M_DRAFT = "\u2060D\u2060"
-        private const val M_SPANS = "\u2060S\u2060"
-    }
-
     fun getAllEntries(): Flow<List<DiaryEntryEntity>> = diaryDao.getAllEntries()
     fun getEntryByDate(dateKey: String): Flow<DiaryEntryEntity?> = diaryDao.getEntryByDate(dateKey)
     fun getAllDateKeys(): Flow<List<String>> = diaryDao.getAllDateKeys()
@@ -38,35 +33,39 @@ class DiaryRepository @Inject constructor(
         }
     }
 
-    suspend fun saveContent(dateKey: String, contentJson: String, plainText: String) {
+    fun getNoteMessages(dateKey: String): Flow<List<NoteMessageEntity>> = noteDao.getMessagesForDate(dateKey)
+    suspend fun getAllNotesForBackup() = noteDao.getAllForBackup()
+
+    suspend fun addNoteMessage(dateKey: String, text: String, sentAt: Long = System.currentTimeMillis()) {
+        val clean = text.trim()
+        if (clean.isBlank()) return
         ensureEntry(dateKey)
-        val wc = plainText.split(Regex("\\s+")).filter { it.isNotBlank() }.size
-        diaryDao.updateContent(dateKey, contentJson, plainText, wc)
-        versionHistoryDao.insertVersion(
-            VersionHistoryEntity(diaryDateKey = dateKey, contentJson = contentJson, plainText = plainText, wordCount = wc)
-        )
-        if (versionHistoryDao.countVersions(dateKey) > 50)
-            versionHistoryDao.pruneOldVersions(dateKey, System.currentTimeMillis() - 30L * 86_400_000)
+        noteDao.insertMessage(NoteMessageEntity(dateKey = dateKey, text = clean, sentAt = sentAt))
+        resyncDaySummary(dateKey)
+    }
+
+    suspend fun mergeNotesFromBackup(items: List<NoteMessageEntity>) {
+        val affectedDates = mutableSetOf<String>()
+        items.forEach { remote ->
+            val existing = noteDao.findMatch(remote.dateKey, remote.text, remote.sentAt)
+            if (existing == null) {
+                noteDao.insertMessage(remote)
+                affectedDates += remote.dateKey
+            }
+        }
+        affectedDates.forEach { resyncDaySummary(it) }
+    }
+
+    private suspend fun resyncDaySummary(dateKey: String) {
+        val all = noteDao.getMessagesForDateOnce(dateKey)
+        val combined = all.joinToString("\n\n") { it.text }
+        val wc = combined.split(Regex("\\s+")).filter { it.isNotBlank() }.size
+        diaryDao.updateContent(dateKey, combined, combined, wc)
     }
 
     suspend fun autoLockPastEntries() {
-        val todayKey = LocalDate.now().toString()
-        val all = diaryDao.getAllForBackup()
-        for (entry in all) {
-            if (entry.dateKey >= todayKey) continue
-            val raw = entry.contentJson
-            if (!raw.contains(M_DRAFT)) continue
-
-            val locked = if (raw.contains(M_LOCK)) raw.substringAfter(M_LOCK).substringBefore(M_DRAFT) else ""
-            val rest = raw.substringAfter(M_DRAFT, "")
-            val draftText = rest.substringBefore(M_SPANS)
-            if (draftText.isBlank()) continue
-
-            val combined = if (locked.isBlank()) draftText else "$locked\n\n$draftText"
-            val newContent = "$M_LOCK$combined$M_DRAFT$M_SPANS"
-            val wc = combined.split(Regex("\\s+")).filter { it.isNotBlank() }.size
-            diaryDao.updateContent(entry.dateKey, newContent, combined, wc)
-        }
+        // No-op under the chat model — every note message is already immediate
+        // and immutable the moment it's sent.
     }
 
     suspend fun starWholeDay(dateKey: String) {
