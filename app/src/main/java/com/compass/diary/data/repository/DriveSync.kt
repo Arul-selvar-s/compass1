@@ -3,6 +3,7 @@ package com.compass.diary.data.repository
 import android.content.Context
 import com.compass.diary.data.local.entity.DiaryEntryEntity
 import com.compass.diary.data.local.entity.NoteMessageEntity
+import com.compass.diary.data.local.entity.PhotoEntity
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.data.local.entity.StarredItemEntity
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -15,6 +16,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -35,6 +37,7 @@ class DriveSync @Inject constructor(
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
     private suspend fun token(): String = withContext(Dispatchers.IO) {
@@ -58,6 +61,7 @@ class DriveSync @Inject constructor(
             val starred = repo.getAllStarredForBackup()
             val songs   = repo.getAllSongsForBackup()
             val notes   = repo.getAllNotesForBackup()
+            val photos  = repo.getAllPhotosForBackup()
 
             val entryArr = JSONArray()
             entries.forEach { e ->
@@ -103,15 +107,26 @@ class DriveSync @Inject constructor(
                 })
             }
 
+            val photoArr = JSONArray()
+            photos.forEach { p ->
+                photoArr.put(JSONObject().apply {
+                    put("dateKey",     p.dateKey)
+                    put("fileName",    p.fileName)
+                    put("takenAt",     p.takenAt)
+                    put("driveFileId", p.driveFileId ?: JSONObject.NULL)
+                })
+            }
+
             val body = JSONObject().apply {
                 put("entries", entryArr)
                 put("starred", starredArr)
                 put("songs",   songArr)
                 put("notes",   noteArr)
+                put("photos",  photoArr)
             }.toString()
 
-            val existingId = findFileId(tok)
-            if (existingId == null) createFile(tok, body) else updateFile(tok, existingId, body)
+            val existingId = findFileId(tok, FILE_NAME)
+            if (existingId == null) createJsonFile(tok, FILE_NAME, body) else updateFile(tok, existingId, body)
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -121,7 +136,7 @@ class DriveSync @Inject constructor(
     suspend fun downloadAndRestore(): Result<Int> = withContext(Dispatchers.IO) {
         try {
             val tok = token()
-            val id = findFileId(tok) ?: return@withContext Result.success(0)
+            val id = findFileId(tok, FILE_NAME) ?: return@withContext Result.success(0)
             val content = downloadFile(tok, id)
             val json = JSONObject(content)
 
@@ -177,14 +192,64 @@ class DriveSync @Inject constructor(
             }
             repo.mergeNotesFromBackup(notes)
 
+            val photoArr = json.optJSONArray("photos") ?: JSONArray()
+            val photos = (0 until photoArr.length()).map { i ->
+                val o = photoArr.getJSONObject(i)
+                PhotoEntity(
+                    dateKey     = o.getString("dateKey"),
+                    fileName    = o.getString("fileName"),
+                    takenAt     = o.optLong("takenAt", System.currentTimeMillis()),
+                    driveFileId = if (o.isNull("driveFileId")) null else o.optString("driveFileId")
+                )
+            }
+            val newPhotos = repo.mergePhotosFromBackup(photos)
+
+            val photosDir = File(context.filesDir, "photos").apply { mkdirs() }
+            newPhotos.forEach { p ->
+                val localFile = File(photosDir, p.fileName)
+                if (!localFile.exists() && p.driveFileId != null) {
+                    try { downloadBinaryFile(tok, p.driveFileId, localFile) } catch (e: Exception) { /* retry next sync */ }
+                }
+            }
+
             Result.success(entries.size)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    private fun findFileId(tok: String): String? {
-        val url = "$DRIVE_V3/files?q=name='$FILE_NAME'+and+trashed=false&fields=files(id)"
+    suspend fun uploadPhotoFile(localFile: File): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val tok = token()
+            val boundary = "photo_boundary_${System.currentTimeMillis()}"
+            val metaJson = JSONObject().apply { put("name", localFile.name) }.toString()
+            val imageBytes = localFile.readBytes()
+
+            val out = java.io.ByteArrayOutputStream()
+            out.write("--$boundary\r\n".toByteArray())
+            out.write("Content-Type: application/json; charset=UTF-8\r\n\r\n".toByteArray())
+            out.write(metaJson.toByteArray())
+            out.write("\r\n--$boundary\r\n".toByteArray())
+            out.write("Content-Type: image/jpeg\r\n\r\n".toByteArray())
+            out.write(imageBytes)
+            out.write("\r\n--$boundary--".toByteArray())
+
+            val requestBody = out.toByteArray().toRequestBody("multipart/related; boundary=$boundary".toMediaType())
+            val resp = client.newCall(Request.Builder()
+                .url("$DRIVE_UPL/files?uploadType=multipart&fields=id")
+                .addHeader("Authorization", "Bearer $tok")
+                .post(requestBody)
+                .build()).execute()
+            if (!resp.isSuccessful) return@withContext Result.failure(Exception("Photo upload failed: ${resp.code}"))
+            val id = JSONObject(resp.body?.string() ?: "{}").getString("id")
+            Result.success(id)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun findFileId(tok: String, name: String): String? {
+        val url = "$DRIVE_V3/files?q=name='$name'+and+trashed=false&fields=files(id)"
         val resp = client.newCall(Request.Builder().url(url)
             .addHeader("Authorization", "Bearer $tok").build()).execute()
         if (!resp.isSuccessful) {
@@ -194,8 +259,8 @@ class DriveSync @Inject constructor(
         return if (files.length() > 0) files.getJSONObject(0).getString("id") else null
     }
 
-    private fun createFile(tok: String, body: String) {
-        val meta = JSONObject().apply { put("name", FILE_NAME) }.toString()
+    private fun createJsonFile(tok: String, name: String, body: String) {
+        val meta = JSONObject().apply { put("name", name) }.toString()
         val mp = "--b\r\nContent-Type: $MIME_JSON\r\n\r\n$meta\r\n--b\r\nContent-Type: $MIME_JSON\r\n\r\n$body\r\n--b--"
         val resp = client.newCall(Request.Builder()
             .url("$DRIVE_UPL/files?uploadType=multipart")
@@ -227,5 +292,16 @@ class DriveSync @Inject constructor(
             throw Exception("Drive download failed: ${resp.code} ${resp.body?.string()}")
         }
         return resp.body?.string() ?: "{}"
+    }
+
+    private fun downloadBinaryFile(tok: String, fileId: String, destFile: File) {
+        val resp = client.newCall(Request.Builder()
+            .url("$DRIVE_V3/files/$fileId?alt=media")
+            .addHeader("Authorization", "Bearer $tok")
+            .build()).execute()
+        if (!resp.isSuccessful) {
+            throw Exception("Photo download failed: ${resp.code}")
+        }
+        destFile.outputStream().use { out -> resp.body?.byteStream()?.copyTo(out) }
     }
 }
