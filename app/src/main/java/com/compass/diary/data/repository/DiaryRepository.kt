@@ -18,7 +18,8 @@ class DiaryRepository @Inject constructor(
     private val drawingDao: DrawingDao,
     private val songDao: SongDao,
     private val voiceMessageDao: VoiceMessageDao,
-    private val noteDao: NoteDao
+    private val noteDao: NoteDao,
+    private val photoDao: PhotoDao
 ) {
     fun getAllEntries(): Flow<List<DiaryEntryEntity>> = diaryDao.getAllEntries()
     fun getEntryByDate(dateKey: String): Flow<DiaryEntryEntity?> = diaryDao.getEntryByDate(dateKey)
@@ -64,8 +65,7 @@ class DiaryRepository @Inject constructor(
     }
 
     suspend fun autoLockPastEntries() {
-        // No-op under the chat model — every note message is already immediate
-        // and immutable the moment it's sent.
+        // No-op under the chat model — every note message is immutable on send.
     }
 
     suspend fun starWholeDay(dateKey: String) {
@@ -119,6 +119,25 @@ class DiaryRepository @Inject constructor(
             val existing = voiceMessageDao.findMatch(remote.audioFileName)
             if (existing == null) voiceMessageDao.insertVoice(remote)
         }
+    }
+
+    fun getPhotosForDate(dateKey: String): Flow<List<PhotoEntity>> = photoDao.getPhotosForDate(dateKey)
+    suspend fun getPhotosForDateOnce(dateKey: String) = photoDao.getPhotosForDateOnce(dateKey)
+    fun getAllPhotos(): Flow<List<PhotoEntity>> = photoDao.getAllPhotos()
+    suspend fun getAllPhotosForBackup() = photoDao.getAllForBackup()
+    suspend fun addPhoto(p: PhotoEntity): Long = photoDao.insertPhoto(p)
+    suspend fun setPhotoDriveFileId(id: Long, fileId: String) = photoDao.setDriveFileId(id, fileId)
+
+    suspend fun mergePhotosFromBackup(items: List<PhotoEntity>): List<PhotoEntity> {
+        val added = mutableListOf<PhotoEntity>()
+        items.forEach { remote ->
+            val existing = photoDao.findMatch(remote.dateKey, remote.fileName)
+            if (existing == null) {
+                photoDao.insertPhoto(remote)
+                added += remote
+            }
+        }
+        return added
     }
 
     suspend fun searchEntries(q: String) = diaryDao.searchEntries(q)
