@@ -1,5 +1,6 @@
 package com.compass.diary.ui.screens.calendar
 
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -11,30 +12,42 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.compass.diary.data.local.entity.PhotoEntity
 import com.compass.diary.ui.theme.CompassColors
 import com.compass.diary.viewmodel.DiaryViewModel
+import com.compass.diary.viewmodel.PhotoViewModel
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun CalendarScreen(
     onPage: (String) -> Unit,
     onBack: () -> Unit,
-    viewModel: DiaryViewModel = hiltViewModel()
+    viewModel: DiaryViewModel = hiltViewModel(),
+    photoViewModel: PhotoViewModel = hiltViewModel()
 ) {
     val allKeys by viewModel.allDateKeys.collectAsState()
     val keySet  = remember(allKeys) { allKeys.toSet() }
+    val allPhotos by photoViewModel.allPhotos.collectAsState()
+    val latestPhotoByDate = remember(allPhotos) {
+        allPhotos.groupBy { it.dateKey }.mapValues { (_, v) -> v.maxByOrNull { it.takenAt } }
+    }
     var month   by remember { mutableStateOf(YearMonth.now()) }
     val today   = remember { LocalDate.now() }
+    var fullPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
 
     Scaffold(
         topBar = {
@@ -82,15 +95,32 @@ fun CalendarScreen(
                                 val isToday = date == today
                                 val hasEntry = key in keySet
                                 val future  = date > today
+                                val photo   = latestPhotoByDate[key]
+                                val bmp = remember(photo?.fileName) {
+                                    photo?.let { runCatching { BitmapFactory.decodeFile(photoViewModel.photoFile(it.fileName).absolutePath) }.getOrNull() }
+                                }
                                 Box(
                                     Modifier.weight(1f).aspectRatio(1f).padding(2.dp)
                                         .background(when { isToday -> CompassColors.Gold400; hasEntry -> CompassColors.Blue500; else -> Color.Transparent }, CircleShape)
-                                        .then(if (!future) Modifier.clickable { onPage(key) } else Modifier),
+                                        .then(
+                                            if (!future) Modifier.combinedClickable(
+                                                onClick = { onPage(key) },
+                                                onLongClick = { if (photo != null) fullPhoto = photo }
+                                            ) else Modifier
+                                        ),
                                     contentAlignment = Alignment.Center
                                 ) {
+                                    if (bmp != null) {
+                                        androidx.compose.foundation.Image(
+                                            bmp.asImageBitmap(), null,
+                                            modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f), CircleShape))
+                                    }
                                     Text("$day", style = MaterialTheme.typography.bodySmall,
                                         fontWeight = if (isToday || hasEntry) FontWeight.Bold else FontWeight.Normal,
-                                        color = when { future -> MaterialTheme.colorScheme.onSurface.copy(.3f); isToday || hasEntry -> Color.White; else -> MaterialTheme.colorScheme.onSurface })
+                                        color = when { bmp != null -> Color.White; future -> MaterialTheme.colorScheme.onSurface.copy(.3f); isToday || hasEntry -> Color.White; else -> MaterialTheme.colorScheme.onSurface })
                                 }
                             }
                         }
@@ -104,6 +134,8 @@ fun CalendarScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(12.dp).background(CompassColors.Blue500, CircleShape)); Spacer(Modifier.width(6.dp)); Text("Has entry", style = MaterialTheme.typography.labelSmall) }
                 Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(12.dp).background(CompassColors.Gold400, CircleShape)); Spacer(Modifier.width(6.dp)); Text("Today", style = MaterialTheme.typography.labelSmall) }
             }
+            Text("Hold a date's photo to view it full size", style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
 
             Spacer(Modifier.height(16.dp))
 
@@ -117,6 +149,17 @@ fun CalendarScreen(
                     VerticalDivider(Modifier.height(40.dp))
                     StatCol("${if (month.lengthOfMonth() > 0) count * 100 / month.lengthOfMonth() else 0}%", "Consistency")
                 }
+            }
+        }
+    }
+
+    if (fullPhoto != null) {
+        val file = photoViewModel.photoFile(fullPhoto!!.fileName)
+        Dialog(onDismissRequest = { fullPhoto = null }) {
+            val bmp = remember(fullPhoto!!.fileName) { runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull() }
+            if (bmp != null) {
+                androidx.compose.foundation.Image(bmp.asImageBitmap(), "Photo",
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)), contentScale = ContentScale.Fit)
             }
         }
     }
