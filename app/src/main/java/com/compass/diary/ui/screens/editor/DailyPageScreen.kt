@@ -1,19 +1,26 @@
 package com.compass.diary.ui.screens.editor
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Star
@@ -22,16 +29,23 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.compass.diary.data.local.entity.NoteMessageEntity
+import com.compass.diary.data.local.entity.PhotoEntity
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.data.local.entity.VoiceMessageEntity
 import com.compass.diary.ui.theme.CompassColors
 import com.compass.diary.viewmodel.DiaryViewModel
+import com.compass.diary.viewmodel.PhotoViewModel
 import com.compass.diary.viewmodel.SongViewModel
 import com.compass.diary.viewmodel.VoiceViewModel
 import kotlinx.coroutines.launch
@@ -61,13 +75,16 @@ fun DailyPageScreen(
     onAI: () -> Unit,
     viewModel: DiaryViewModel = hiltViewModel(),
     songViewModel: SongViewModel = hiltViewModel(),
-    voiceViewModel: VoiceViewModel = hiltViewModel()
+    voiceViewModel: VoiceViewModel = hiltViewModel(),
+    photoViewModel: PhotoViewModel = hiltViewModel()
 ) {
     val entry     by viewModel.currentEntry.collectAsState()
+    val todayKey  by viewModel.todayKey.collectAsState()
     val messages  by remember(dateKey) { viewModel.notesForDate(dateKey) }.collectAsState(initial = emptyList())
     val allSongs  by songViewModel.songs.collectAsState()
     val allVoice  by voiceViewModel.messages.collectAsState()
     val playingId by voiceViewModel.playingId.collectAsState()
+    val dayPhotos by remember(dateKey) { photoViewModel.photosForDate(dateKey) }.collectAsState(initial = emptyList())
 
     val context = LocalContext.current
     val listState = rememberLazyListState()
@@ -75,6 +92,30 @@ fun DailyPageScreen(
     val timeFmt = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
 
     var input by remember { mutableStateOf("") }
+    val isToday = dateKey == todayKey
+    val latestPhoto = dayPhotos.maxByOrNull { it.takenAt }
+
+    var showCapturePreview by remember { mutableStateOf(false) }
+    var pendingCaptureUri by remember { mutableStateOf<Uri?>(null) }
+    var showFullPhoto by remember { mutableStateOf(false) }
+
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        if (success) showCapturePreview = true else photoViewModel.discardCapture()
+    }
+    fun launchCamera() {
+        val uri = photoViewModel.createCaptureUri()
+        pendingCaptureUri = uri
+        cameraLauncher.launch(uri)
+    }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) launchCamera() }
+
+    fun requestCamera() {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+        if (granted) launchCamera() else cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+    }
 
     val dayDate = remember(dateKey) { runCatching { LocalDate.parse(dateKey) }.getOrNull() }
     val songsToday = remember(allSongs, dateKey) { allSongs.filter { dayDate != null && localDateOf(it.sentAt) == dayDate } }
@@ -97,13 +138,33 @@ fun DailyPageScreen(
             TopAppBar(
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 title = {
-                    Column {
-                        Text(entry?.title ?: dateKey, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text("${entry?.wordCount ?: 0} words", style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (latestPhoto != null) {
+                            val file = remember(latestPhoto.fileName) { photoViewModel.photoFile(latestPhoto.fileName) }
+                            val bmp = remember(latestPhoto.fileName) { runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull() }
+                            if (bmp != null) {
+                                Image(
+                                    bmp.asImageBitmap(), "Today's photo",
+                                    modifier = Modifier.size(36.dp).clip(CircleShape).clickable { showFullPhoto = true },
+                                    contentScale = ContentScale.Crop
+                                )
+                                Spacer(Modifier.width(10.dp))
+                            }
+                        }
+                        Column {
+                            Text(entry?.title ?: dateKey, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text("${entry?.wordCount ?: 0} words", style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 },
                 actions = {
+                    if (isToday) {
+                        IconButton(onClick = { if (dayPhotos.size < 2) requestCamera() }, enabled = dayPhotos.size < 2) {
+                            Icon(Icons.Default.CameraAlt, "Take photo",
+                                tint = if (dayPhotos.size < 2) LocalContentColor.current else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                        }
+                    }
                     IconButton(onClick = { viewModel.starWholeDay(dateKey) }) {
                         Icon(Icons.Default.Star, "Star this day", tint = CompassColors.Star)
                     }
@@ -171,6 +232,46 @@ fun DailyPageScreen(
 
             items(messages.reversed(), key = { it.id }) { msg ->
                 NoteBubble(msg, timeFmt) { viewModel.starNoteMessage(dateKey, msg.text) }
+            }
+        }
+    }
+
+    if (showCapturePreview) {
+        val file = photoViewModel.currentCaptureFile()
+        AlertDialog(
+            onDismissRequest = { /* force an explicit choice */ },
+            title = { Text("Save this photo?") },
+            text = {
+                if (file != null) {
+                    val bmp = remember(file) { runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull() }
+                    if (bmp != null) {
+                        Image(bmp.asImageBitmap(), null, Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp)),
+                            contentScale = ContentScale.Crop)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    photoViewModel.savePendingCapture(dateKey)
+                    showCapturePreview = false
+                }, colors = ButtonDefaults.buttonColors(containerColor = CompassColors.Blue600)) { Text("Save") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = {
+                    photoViewModel.discardCapture()
+                    showCapturePreview = false
+                    launchCamera()
+                }) { Text("Retake") }
+            }
+        )
+    }
+
+    if (showFullPhoto && latestPhoto != null) {
+        val file = photoViewModel.photoFile(latestPhoto.fileName)
+        Dialog(onDismissRequest = { showFullPhoto = false }) {
+            val bmp = remember(latestPhoto.fileName) { runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull() }
+            if (bmp != null) {
+                Image(bmp.asImageBitmap(), "Photo", Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)), contentScale = ContentScale.Fit)
             }
         }
     }
