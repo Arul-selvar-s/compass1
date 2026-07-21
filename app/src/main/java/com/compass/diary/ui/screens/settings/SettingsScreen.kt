@@ -30,6 +30,7 @@ fun SettingsScreen(
     onLogout: () -> Unit,
     onAI: () -> Unit,
     onReminders: () -> Unit,
+    onExport: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val darkMode    by viewModel.darkMode.collectAsState()
@@ -93,6 +94,10 @@ fun SettingsScreen(
                 SRow(Icons.Default.Notifications, "Reminders",
                     subtitle = "Manage your reminders",
                     onClick = onReminders)
+                Div()
+                SRow(Icons.Default.FileDownload, "Export Data",
+                    subtitle = "Save a password-protected backup to your phone",
+                    onClick = onExport)
             }
 
             Section("Security") {
