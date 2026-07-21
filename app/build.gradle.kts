@@ -67,4 +67,6 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.google.auth)
     implementation(libs.gson)
+    implementation("net.lingala.zip4j:zip4j:2.11.5")
+
 }
