@@ -16,6 +16,7 @@ import com.compass.diary.ui.screens.splash.SplashScreen
 import com.compass.diary.ui.screens.starred.StarredScreen
 import com.compass.diary.ui.screens.unlock.UnlockSetupScreen
 import com.compass.diary.ui.screens.voice.VoiceScreen
+import com.compass.diary.ui.screens.export.ExportScreen
 
 object R {
     const val SPLASH    = "splash"
@@ -31,6 +32,7 @@ object R {
     const val SETTINGS   = "settings"
     const val SONGS      = "songs"
     const val VOICE      = "voice"
+    const val EXPORT     = "export"
     fun page(k: String) = "page/$k"
 }
 
@@ -77,10 +79,12 @@ fun CompassNavGraph(navController: NavHostController) {
                 onBack      = { navController.popBackStack() },
                 onLogout    = { navController.navigate(R.COMPASS) { popUpTo(0) { inclusive = true } } },
                 onAI        = { navController.navigate(R.AI) },
-                onReminders = { navController.navigate(R.REMINDERS) }
+                onReminders = { navController.navigate(R.REMINDERS) },
+                onExport    = { navController.navigate(R.EXPORT) }
             )
         }
         composable(R.SONGS)     { SongsScreen(onBack = { navController.popBackStack() }) }
         composable(R.VOICE)     { VoiceScreen(onBack = { navController.popBackStack() }) }
+        composable(R.EXPORT)    { ExportScreen(onBack = { navController.popBackStack() }) }
     }
 }
