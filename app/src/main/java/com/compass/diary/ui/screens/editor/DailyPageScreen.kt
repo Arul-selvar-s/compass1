@@ -173,7 +173,7 @@ fun DailyPageScreen(
         },
         bottomBar = {
             Row(
-                Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(12.dp),
+                Modifier.fillMaxWidth().imePadding().background(MaterialTheme.colorScheme.surface).padding(12.dp),
                 verticalAlignment = Alignment.Bottom
             ) {
                 OutlinedTextField(
