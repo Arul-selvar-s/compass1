@@ -11,17 +11,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/**
- * Transcodes any imported audio file down to a small, consistent AAC/M4A file
- * (mono, 44.1kHz, 64kbps) — the "always compress" core rule for imported files.
- * Recorded audio is already compressed at capture time (see VoiceViewModel).
- *
- * BUGFIX: raw PCM sources (WAV files report mime "audio/raw") have no decoder
- * registered on Android — trying to create one threw an exception and silently
- * failed the whole import. Raw PCM doesn't need decoding at all (it already IS
- * decoded audio), so that case now skips the decoder and feeds extractor
- * samples straight into the encoder.
- */
 object AudioCompressor {
 
     private const val BIT_RATE = 64_000
@@ -29,7 +18,6 @@ object AudioCompressor {
     private const val CHANNEL_COUNT = 1
     private const val TIMEOUT_US = 10_000L
 
-    /** Returns a human-readable reason on failure, or null on success. */
     suspend fun compressToAac(context: Context, sourceUri: Uri, outputFile: File): String? =
         withContext(Dispatchers.IO) {
             var extractor: MediaExtractor? = null
@@ -80,11 +68,10 @@ object AudioCompressor {
                 val decInfo = MediaCodec.BufferInfo()
                 val encInfo = MediaCodec.BufferInfo()
                 var extractorDone = false
-                var decoderDone = isRawPcm  // no decode step for raw PCM
+                var decoderDone = isRawPcm
                 var encoderDone = false
 
                 if (isRawPcm) {
-                    // Feed raw PCM samples from the extractor directly into the encoder.
                     while (!extractorDone) {
                         val encInIndex = encoder.dequeueInputBuffer(TIMEOUT_US)
                         if (encInIndex >= 0) {
@@ -102,7 +89,6 @@ object AudioCompressor {
                             muxerTrackIndex = newIndex; muxerStarted = started
                         }.let { if (it) encoderDone = true }
                     }
-                    // final drain until EOS
                     while (!encoderDone) {
                         encoderDone = drainEncoder(encoder, encInfo, muxer, muxerTrackIndex, muxerStarted) { newIndex, started ->
                             muxerTrackIndex = newIndex; muxerStarted = started
@@ -130,14 +116,20 @@ object AudioCompressor {
                             if (outIndex >= 0) {
                                 val decodedBuffer = decoder.getOutputBuffer(outIndex)
                                 if (decInfo.size > 0 && decodedBuffer != null) {
-                                    val encInIndex = encoder.dequeueInputBuffer(TIMEOUT_US)
-                                    if (encInIndex >= 0) {
+                                    decodedBuffer.position(decInfo.offset)
+                                    decodedBuffer.limit(decInfo.offset + decInfo.size)
+
+                                    while (decodedBuffer.hasRemaining()) {
+                                        val encInIndex = encoder.dequeueInputBuffer(TIMEOUT_US)
+                                        if (encInIndex < 0) break
                                         val encInBuffer = encoder.getInputBuffer(encInIndex)!!
-                                        decodedBuffer.position(decInfo.offset)
-                                        decodedBuffer.limit(decInfo.offset + decInfo.size)
                                         encInBuffer.clear()
-                                        encInBuffer.put(decodedBuffer)
-                                        encoder.queueInputBuffer(encInIndex, 0, decInfo.size, decInfo.presentationTimeUs, 0)
+                                        val toCopy = minOf(decodedBuffer.remaining(), encInBuffer.remaining())
+                                        val slice = decodedBuffer.slice()
+                                        slice.limit(toCopy)
+                                        encInBuffer.put(slice)
+                                        decodedBuffer.position(decodedBuffer.position() + toCopy)
+                                        encoder.queueInputBuffer(encInIndex, 0, toCopy, decInfo.presentationTimeUs, 0)
                                     }
                                 }
                                 val isEos = (decInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
@@ -173,7 +165,6 @@ object AudioCompressor {
             }
         }
 
-    /** Drains all currently-available encoder output. Returns true if end-of-stream was reached. */
     private fun drainEncoder(
         encoder: MediaCodec,
         encInfo: MediaCodec.BufferInfo,
