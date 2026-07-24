@@ -34,13 +34,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.compass.diary.data.local.entity.NoteMessageEntity
-import com.compass.diary.data.local.entity.PhotoEntity
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.data.local.entity.VoiceMessageEntity
 import com.compass.diary.ui.theme.CompassColors
@@ -85,6 +84,7 @@ fun DailyPageScreen(
     val allVoice  by voiceViewModel.messages.collectAsState()
     val playingId by voiceViewModel.playingId.collectAsState()
     val dayPhotos by remember(dateKey) { photoViewModel.photosForDate(dateKey) }.collectAsState(initial = emptyList())
+    val mood      by remember(dateKey) { viewModel.moodForDate(dateKey) }.collectAsState(initial = null)
 
     val context = LocalContext.current
     val listState = rememberLazyListState()
@@ -98,6 +98,9 @@ fun DailyPageScreen(
     var showCapturePreview by remember { mutableStateOf(false) }
     var pendingCaptureUri by remember { mutableStateOf<Uri?>(null) }
     var showFullPhoto by remember { mutableStateOf(false) }
+
+    var missedSlider by remember(dateKey) { mutableFloatStateOf(50f) }
+    var lovedSlider by remember(dateKey) { mutableFloatStateOf(50f) }
 
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success) showCapturePreview = true else photoViewModel.discardCapture()
@@ -172,26 +175,51 @@ fun DailyPageScreen(
             )
         },
         bottomBar = {
-            Row(
-                Modifier.fillMaxWidth().imePadding().background(MaterialTheme.colorScheme.surface).padding(12.dp),
-                verticalAlignment = Alignment.Bottom
-            ) {
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    placeholder = { Text("Write something…") },
-                    modifier = Modifier.weight(1f),
-                    maxLines = 5
-                )
-                Spacer(Modifier.width(8.dp))
-                IconButton(
-                    onClick = { send() },
-                    enabled = input.isNotBlank(),
-                    modifier = Modifier
-                        .size(48.dp)
-                        .background(if (input.isNotBlank()) CompassColors.Blue600 else MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(24.dp))
+            Column(Modifier.fillMaxWidth().imePadding().background(MaterialTheme.colorScheme.surface)) {
+                if (mood != null) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        Text("Missed you: ${mood!!.missedPercent}%", style = MaterialTheme.typography.labelMedium)
+                        Text("Loved you: ${mood!!.lovedPercent}%", style = MaterialTheme.typography.labelMedium)
+                    }
+                } else if (isToday) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+                        Text("How much you missed me today  ${missedSlider.toInt()}%", style = MaterialTheme.typography.labelSmall)
+                        Slider(value = missedSlider, onValueChange = { missedSlider = it }, valueRange = 0f..100f)
+                        Text("How much loved me today  ${lovedSlider.toInt()}%", style = MaterialTheme.typography.labelSmall)
+                        Slider(value = lovedSlider, onValueChange = { lovedSlider = it }, valueRange = 0f..100f)
+                        TextButton(
+                            onClick = {
+                                viewModel.saveMood(dateKey, missedSlider.toInt(), lovedSlider.toInt()) { }
+                            },
+                            modifier = Modifier.align(Alignment.End)
+                        ) { Text("Save") }
+                    }
+                }
+
+                Row(
+                    Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.Bottom
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, "Send", tint = if (input.isNotBlank()) Color.White else MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = input,
+                        onValueChange = { input = it },
+                        placeholder = { Text("Write something…") },
+                        modifier = Modifier.weight(1f),
+                        maxLines = 5
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    IconButton(
+                        onClick = { send() },
+                        enabled = input.isNotBlank(),
+                        modifier = Modifier
+                            .size(48.dp)
+                            .background(if (input.isNotBlank()) CompassColors.Blue600 else MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(24.dp))
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, "Send", tint = if (input.isNotBlank()) Color.White else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }
