@@ -19,7 +19,8 @@ class DiaryRepository @Inject constructor(
     private val songDao: SongDao,
     private val voiceMessageDao: VoiceMessageDao,
     private val noteDao: NoteDao,
-    private val photoDao: PhotoDao
+    private val photoDao: PhotoDao,
+    private val moodDao: MoodDao
 ) {
     fun getAllEntries(): Flow<List<DiaryEntryEntity>> = diaryDao.getAllEntries()
     fun getEntryByDate(dateKey: String): Flow<DiaryEntryEntity?> = diaryDao.getEntryByDate(dateKey)
@@ -138,6 +139,26 @@ class DiaryRepository @Inject constructor(
             }
         }
         return added
+    }
+
+    fun getMoodForDate(dateKey: String): Flow<MoodEntity?> = moodDao.getForDate(dateKey)
+    suspend fun getMoodForDateOnce(dateKey: String) = moodDao.getForDateOnce(dateKey)
+    suspend fun getAllMoodForBackup() = moodDao.getAllForBackup()
+
+    suspend fun saveMood(dateKey: String, missedPercent: Int, lovedPercent: Int): Boolean {
+        if (moodDao.getForDateOnce(dateKey) != null) return false
+        return try {
+            moodDao.insert(MoodEntity(dateKey = dateKey, missedPercent = missedPercent, lovedPercent = lovedPercent))
+            true
+        } catch (e: Exception) { false }
+    }
+
+    suspend fun mergeMoodFromBackup(items: List<MoodEntity>) {
+        items.forEach { remote ->
+            if (moodDao.getForDateOnce(remote.dateKey) == null) {
+                try { moodDao.insert(remote) } catch (e: Exception) { /* already exists, ignore */ }
+            }
+        }
     }
 
     suspend fun searchEntries(q: String) = diaryDao.searchEntries(q)
