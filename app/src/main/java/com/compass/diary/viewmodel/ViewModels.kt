@@ -215,7 +215,19 @@ class DiaryViewModel @Inject constructor(
         viewModelScope.launch { repo.ensureEntry(dateKey) }
     }
 
+    
     fun notesForDate(dateKey: String) = repo.getNoteMessages(dateKey)
+
+    fun moodForDate(dateKey: String) = repo.getMoodForDate(dateKey)
+
+    /** Returns true if it actually saved; false means today's mood was already saved. */
+    fun saveMood(dateKey: String, missedPercent: Int, lovedPercent: Int, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val ok = repo.saveMood(dateKey, missedPercent, lovedPercent)
+            if (ok) scheduleSync()
+            onResult(ok)
+        }
+    }
 
     fun sendNote(dateKey: String, text: String) {
         viewModelScope.launch {
