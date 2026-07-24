@@ -2,6 +2,7 @@ package com.compass.diary.data.repository
 
 import android.content.Context
 import com.compass.diary.data.local.entity.DiaryEntryEntity
+import com.compass.diary.data.local.entity.MoodEntity
 import com.compass.diary.data.local.entity.NoteMessageEntity
 import com.compass.diary.data.local.entity.PhotoEntity
 import com.compass.diary.data.local.entity.SongMessageEntity
@@ -62,6 +63,7 @@ class DriveSync @Inject constructor(
             val songs   = repo.getAllSongsForBackup()
             val notes   = repo.getAllNotesForBackup()
             val photos  = repo.getAllPhotosForBackup()
+            val moods   = repo.getAllMoodForBackup()
 
             val entryArr = JSONArray()
             entries.forEach { e ->
@@ -117,12 +119,23 @@ class DriveSync @Inject constructor(
                 })
             }
 
+            val moodArr = JSONArray()
+            moods.forEach { m ->
+                moodArr.put(JSONObject().apply {
+                    put("dateKey",        m.dateKey)
+                    put("missedPercent",  m.missedPercent)
+                    put("lovedPercent",   m.lovedPercent)
+                    put("savedAt",        m.savedAt)
+                })
+            }
+
             val body = JSONObject().apply {
                 put("entries", entryArr)
                 put("starred", starredArr)
                 put("songs",   songArr)
                 put("notes",   noteArr)
                 put("photos",  photoArr)
+                put("moods",   moodArr)
             }.toString()
 
             val existingId = findFileId(tok, FILE_NAME)
@@ -211,6 +224,18 @@ class DriveSync @Inject constructor(
                     try { downloadBinaryFile(tok, p.driveFileId, localFile) } catch (e: Exception) { /* retry next sync */ }
                 }
             }
+
+            val moodArr = json.optJSONArray("moods") ?: JSONArray()
+            val moods = (0 until moodArr.length()).map { i ->
+                val o = moodArr.getJSONObject(i)
+                MoodEntity(
+                    dateKey       = o.getString("dateKey"),
+                    missedPercent = o.optInt("missedPercent", 0),
+                    lovedPercent  = o.optInt("lovedPercent", 0),
+                    savedAt       = o.optLong("savedAt", System.currentTimeMillis())
+                )
+            }
+            repo.mergeMoodFromBackup(moods)
 
             Result.success(entries.size)
         } catch (e: Exception) {
