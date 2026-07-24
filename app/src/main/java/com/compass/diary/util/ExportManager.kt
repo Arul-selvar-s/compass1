@@ -1,5 +1,6 @@
 package com.compass.diary.util
 
+import com.compass.diary.data.local.entity.MoodEntity
 import com.compass.diary.data.local.entity.NoteMessageEntity
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.data.local.entity.VoiceMessageEntity
@@ -43,6 +44,14 @@ object ExportManager {
         voice.sortedBy { it.sentAt }.forEach { v ->
             val d = Date(v.sentAt)
             sb.append("${dateFmt.format(d)},${timeFmt.format(d)},${v.audioFileName},${v.durationMs / 1000},${v.sourceType},${csvEscape(v.note ?: "")}\n")
+        }
+        return sb.toString()
+    }
+
+    fun moodCsv(moods: List<MoodEntity>): String {
+        val sb = StringBuilder("Date,MissedYouPercent,LovedYouPercent\n")
+        moods.sortedBy { it.dateKey }.forEach { m ->
+            sb.append("${m.dateKey},${m.missedPercent},${m.lovedPercent}\n")
         }
         return sb.toString()
     }
