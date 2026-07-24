@@ -53,12 +53,17 @@ class ExportViewModel @Inject constructor(
         }
     }
 
-    fun exportNotes(from: LocalDate?, to: LocalDate?) = run {
+    fun exportNotes(from: LocalDate?, to: LocalDate?) {
         viewModelScope.launch {
             _isExporting.value = true; _status.value = "Preparing…"
             val filtered = repo.getAllNotesForBackup().filter { inRange(localDateOf(it.sentAt), from, to) }
+            val moods = repo.getAllMoodForBackup().filter {
+                val d = runCatching { LocalDate.parse(it.dateKey) }.getOrNull()
+                d != null && inRange(d, from, to)
+            }
             val workDir = freshWorkDir()
             File(workDir, "notes.csv").writeText(ExportManager.notesCsv(filtered))
+            File(workDir, "mood.csv").writeText(ExportManager.moodCsv(moods))
             finishZip(workDir, "notes")
         }
     }
@@ -98,11 +103,13 @@ class ExportViewModel @Inject constructor(
             val songs  = repo.getAllSongsForBackup().filter { localDateOf(it.sentAt) == day }
             val voice  = repo.getAllVoiceForBackup().filter { localDateOf(it.sentAt) == day }
             val photos = repo.getAllPhotosForBackup().filter { it.dateKey == dateKey }
+            val mood   = repo.getAllMoodForBackup().filter { it.dateKey == dateKey }
 
             val workDir = freshWorkDir()
             File(workDir, "notes.csv").writeText(ExportManager.notesCsv(notes))
             File(workDir, "songs.csv").writeText(ExportManager.songsCsv(songs))
             File(workDir, "voice_manifest.csv").writeText(ExportManager.voiceManifestCsv(voice))
+            File(workDir, "mood.csv").writeText(ExportManager.moodCsv(mood))
 
             val voiceSrcDir = File(context.filesDir, "voice")
             val outVoiceDir = File(workDir, "voice").apply { mkdirs() }
@@ -132,9 +139,14 @@ class ExportViewModel @Inject constructor(
                 val d = runCatching { LocalDate.parse(it.dateKey) }.getOrNull()
                 d != null && inRange(d, from, to)
             }
+            val moods = repo.getAllMoodForBackup().filter {
+                val d = runCatching { LocalDate.parse(it.dateKey) }.getOrNull()
+                d != null && inRange(d, from, to)
+            }
 
             val allDates = (notes.map { it.dateKey } + songs.map { localDateOf(it.sentAt).toString() } +
-                    voice.map { localDateOf(it.sentAt).toString() } + photos.map { it.dateKey }).toSortedSet()
+                    voice.map { localDateOf(it.sentAt).toString() } + photos.map { it.dateKey } +
+                    moods.map { it.dateKey }).toSortedSet()
 
             val workDir = freshWorkDir()
             val voiceSrcDir = File(context.filesDir, "voice")
@@ -146,6 +158,7 @@ class ExportViewModel @Inject constructor(
 
                 File(dayDir, "notes.csv").writeText(ExportManager.notesCsv(notes.filter { it.dateKey == dateKey }))
                 File(dayDir, "songs.csv").writeText(ExportManager.songsCsv(songs.filter { dayDate != null && localDateOf(it.sentAt) == dayDate }))
+                File(dayDir, "mood.csv").writeText(ExportManager.moodCsv(moods.filter { it.dateKey == dateKey }))
                 val dayVoice = voice.filter { dayDate != null && localDateOf(it.sentAt) == dayDate }
                 File(dayDir, "voice_manifest.csv").writeText(ExportManager.voiceManifestCsv(dayVoice))
                 val outVoiceDir = File(dayDir, "voice").apply { mkdirs() }
