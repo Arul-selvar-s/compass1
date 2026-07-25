@@ -162,17 +162,15 @@ fun DailyPageScreen(
                     }
                 },
                 actions = {
-                    if (isToday) {
-                        IconButton(onClick = { if (dayPhotos.size < 2) requestCamera() }, enabled = dayPhotos.size < 2) {
-                            Icon(Icons.Default.CameraAlt, "Take photo",
-                                tint = if (dayPhotos.size < 2) LocalContentColor.current else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-                        }
+                    IconButton(onClick = { if (dayPhotos.size < 2) requestCamera() }, enabled = dayPhotos.size < 2) {
+                        Icon(Icons.Default.CameraAlt, "Take photo",
+                            tint = if (dayPhotos.size < 2) LocalContentColor.current else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
                     }
                     IconButton(onClick = { viewModel.starWholeDay(dateKey) }) {
                         Icon(Icons.Default.Star, "Star this day", tint = CompassColors.Star)
                     }
                 }
-            )
+                
         },
         bottomBar = {
             Column(Modifier.fillMaxWidth().imePadding().background(MaterialTheme.colorScheme.surface)) {
