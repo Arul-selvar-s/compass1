@@ -34,6 +34,7 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.*
 
+private const val SHOW_IMPORT_AUDIO = false
 private fun localDateOf(millis: Long): LocalDate =
     Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
 
@@ -100,8 +101,10 @@ fun VoiceScreen(
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 title = { Text("Voice Messages", fontWeight = FontWeight.Bold) },
                 actions = {
-                    IconButton(onClick = { selectedDateMillis = null; importLauncher.launch(arrayOf("audio/*")) }) {
-                        Icon(Icons.Default.UploadFile, "Import audio")
+                    if (SHOW_IMPORT_AUDIO) {
+                        IconButton(onClick = { selectedDateMillis = null; importLauncher.launch(arrayOf("audio/*")) }) {
+                            Icon(Icons.Default.UploadFile, "Import audio")
+                        }
                     }
                 }
             )
