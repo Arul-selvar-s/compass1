@@ -170,7 +170,7 @@ fun DailyPageScreen(
                         Icon(Icons.Default.Star, "Star this day", tint = CompassColors.Star)
                     }
                 }
-                
+            )
         },
         bottomBar = {
             Column(Modifier.fillMaxWidth().imePadding().background(MaterialTheme.colorScheme.surface)) {
