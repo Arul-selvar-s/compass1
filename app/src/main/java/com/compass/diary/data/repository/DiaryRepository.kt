@@ -45,18 +45,26 @@ class DiaryRepository @Inject constructor(
         noteDao.insertMessage(NoteMessageEntity(dateKey = dateKey, text = clean, sentAt = sentAt))
         resyncDaySummary(dateKey)
     }
-
-    suspend fun mergeNotesFromBackup(items: List<NoteMessageEntity>) {
-        val affectedDates = mutableSetOf<String>()
+    /** Returns every photo that now needs its bytes downloaded — either because it's
+     *  brand new, or because it already existed locally but is only now getting a
+     *  Drive file attached (fixes the "photo only shows on the device that took it"
+     *  bug: previously an existing row with a null driveFileId never got updated). */
+    suspend fun mergePhotosFromBackup(items: List<PhotoEntity>): List<PhotoEntity> {
+        val needDownload = mutableListOf<PhotoEntity>()
         items.forEach { remote ->
-            val existing = noteDao.findMatch(remote.dateKey, remote.text, remote.sentAt)
+            val existing = photoDao.findMatch(remote.dateKey, remote.fileName)
             if (existing == null) {
-                noteDao.insertMessage(remote)
-                affectedDates += remote.dateKey
+                photoDao.insertPhoto(remote)
+                needDownload += remote
+            } else if (existing.driveFileId == null && remote.driveFileId != null) {
+                photoDao.setDriveFileId(existing.id, remote.driveFileId)
+                needDownload += remote.copy(id = existing.id)
             }
         }
-        affectedDates.forEach { resyncDaySummary(it) }
+        return needDownload
     }
+
+
 
     private suspend fun resyncDaySummary(dateKey: String) {
         val all = noteDao.getMessagesForDateOnce(dateKey)
