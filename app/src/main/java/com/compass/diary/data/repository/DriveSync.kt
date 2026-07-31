@@ -58,6 +58,18 @@ class DriveSync @Inject constructor(
     suspend fun uploadAll(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val tok = token()
+
+            val photosDir = File(context.filesDir, "photos")
+            repo.getAllPhotosForBackup().forEach { p ->
+                if (p.driveFileId == null) {
+                    val localFile = File(photosDir, p.fileName)
+                    if (localFile.exists()) {
+                        val uploadedId = uploadPhotoBytes(tok, localFile)
+                        if (uploadedId != null) repo.setPhotoDriveFileId(p.id, uploadedId)
+                    }
+                }
+            }
+
             val entries = repo.getAllForBackup()
             val starred = repo.getAllStarredForBackup()
             val songs   = repo.getAllSongsForBackup()
@@ -215,10 +227,10 @@ class DriveSync @Inject constructor(
                     driveFileId = if (o.isNull("driveFileId")) null else o.optString("driveFileId")
                 )
             }
-            val newPhotos = repo.mergePhotosFromBackup(photos)
+            val needDownload = repo.mergePhotosFromBackup(photos)
 
             val photosDir = File(context.filesDir, "photos").apply { mkdirs() }
-            newPhotos.forEach { p ->
+            needDownload.forEach { p ->
                 val localFile = File(photosDir, p.fileName)
                 if (!localFile.exists() && p.driveFileId != null) {
                     try { downloadBinaryFile(tok, p.driveFileId, localFile) } catch (e: Exception) { /* retry next sync */ }
@@ -246,6 +258,15 @@ class DriveSync @Inject constructor(
     suspend fun uploadPhotoFile(localFile: File): Result<String> = withContext(Dispatchers.IO) {
         try {
             val tok = token()
+            val id = uploadPhotoBytes(tok, localFile) ?: return@withContext Result.failure(Exception("Photo upload failed"))
+            Result.success(id)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun uploadPhotoBytes(tok: String, localFile: File): String? {
+        return try {
             val boundary = "photo_boundary_${System.currentTimeMillis()}"
             val metaJson = JSONObject().apply { put("name", localFile.name) }.toString()
             val imageBytes = localFile.readBytes()
@@ -265,11 +286,10 @@ class DriveSync @Inject constructor(
                 .addHeader("Authorization", "Bearer $tok")
                 .post(requestBody)
                 .build()).execute()
-            if (!resp.isSuccessful) return@withContext Result.failure(Exception("Photo upload failed: ${resp.code}"))
-            val id = JSONObject(resp.body?.string() ?: "{}").getString("id")
-            Result.success(id)
+            if (!resp.isSuccessful) return null
+            JSONObject(resp.body?.string() ?: "{}").getString("id")
         } catch (e: Exception) {
-            Result.failure(e)
+            null
         }
     }
 
