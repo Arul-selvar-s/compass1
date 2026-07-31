@@ -158,7 +158,15 @@ fun DailyPageScreen(
                             Text(entry?.title ?: dateKey, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                             Text("${entry?.wordCount ?: 0} words", style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (latestPhoto != null) {
+                                val label = if (dayPhotos.size >= 2) "Photo replaced" else "Photo taken"
+                                Text("$label ${timeFmt.format(Date(latestPhoto.takenAt))}",
+                                    style = MaterialTheme.typography.labelSmall, color = CompassColors.Blue400)
+                            }
                         }
+
+                        
+                        
                     }
                 },
                 actions = {
