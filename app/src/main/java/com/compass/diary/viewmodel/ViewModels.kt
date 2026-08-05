@@ -10,6 +10,7 @@ import com.compass.diary.util.AutoSaveManager
 import com.compass.diary.util.CompassSensorManager
 import com.compass.diary.util.PreferencesManager
 import com.compass.diary.util.SaveState
+import com.compass.diary.util.SyncScheduler
 import com.compass.diary.util.UpdateChecker
 import com.compass.diary.util.UpdateInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -93,11 +94,11 @@ class SetupViewModel @Inject constructor(
             driveSync.downloadAndRestore().fold(
                 onSuccess = { count ->
                     _driveStatus.value = if (count > 0)
-                        "Restored $count pages ✓" else "No backup yet — will sync after you save"
+                        "Restored $count pages ✓" else "No backup yet — will sync after you send your first message"
                     kotlinx.coroutines.delay(2000); goToStep(3)
                 },
                 onFailure = {
-                    _driveStatus.value = "Connected ✓ — will sync when you send your first message"
+                    _driveStatus.value = "Connected ✓ — will sync automatically"
                     kotlinx.coroutines.delay(2000); goToStep(3)
                 }
             )
@@ -120,7 +121,8 @@ class DiaryViewModel @Inject constructor(
     private val repo: DiaryRepository,
     private val autoSave: AutoSaveManager,
     private val driveSync: DriveSync,
-    private val prefs: PreferencesManager
+    private val prefs: PreferencesManager,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     val todayKey: StateFlow<String> = MutableStateFlow(LocalDate.now().toString())
@@ -186,6 +188,7 @@ class DiaryViewModel @Inject constructor(
                 driveSync.uploadAll()
             }
         }
+        SyncScheduler.requestImmediateSync(context)
     }
 
     private val _refreshStatus = MutableStateFlow<String?>(null)
@@ -215,24 +218,22 @@ class DiaryViewModel @Inject constructor(
         viewModelScope.launch { repo.ensureEntry(dateKey) }
     }
 
-    
     fun notesForDate(dateKey: String) = repo.getNoteMessages(dateKey)
-
-    fun moodForDate(dateKey: String) = repo.getMoodForDate(dateKey)
-
-    /** Returns true if it actually saved; false means today's mood was already saved. */
-    fun saveMood(dateKey: String, missedPercent: Int, lovedPercent: Int, onResult: (Boolean) -> Unit) {
-        viewModelScope.launch {
-            val ok = repo.saveMood(dateKey, missedPercent, lovedPercent)
-            if (ok) scheduleSync()
-            onResult(ok)
-        }
-    }
 
     fun sendNote(dateKey: String, text: String) {
         viewModelScope.launch {
             repo.addNoteMessage(dateKey, text)
             scheduleSync()
+        }
+    }
+
+    fun moodForDate(dateKey: String) = repo.getMoodForDate(dateKey)
+
+    fun saveMood(dateKey: String, missedPercent: Int, lovedPercent: Int, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val ok = repo.saveMood(dateKey, missedPercent, lovedPercent)
+            if (ok) scheduleSync()
+            onResult(ok)
         }
     }
 
@@ -257,6 +258,7 @@ class DiaryViewModel @Inject constructor(
         viewModelScope.launch {
             repo.removeStarred(id)
             driveSync.uploadAll()
+            SyncScheduler.requestImmediateSync(context)
         }
     }
 
