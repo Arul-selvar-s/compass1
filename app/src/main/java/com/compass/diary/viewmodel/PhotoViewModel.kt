@@ -10,6 +10,7 @@ import com.compass.diary.data.repository.DiaryRepository
 import com.compass.diary.data.repository.DriveSync
 import com.compass.diary.util.PhotoCompressor
 import com.compass.diary.util.PreferencesManager
+import com.compass.diary.util.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
@@ -58,24 +59,13 @@ class PhotoViewModel @Inject constructor(
             pendingCaptureFile = null
             if (ok) {
                 val id = repo.addPhoto(PhotoEntity(dateKey = dateKey, fileName = outFile.name))
-                scheduleSync()
                 try {
                     driveSync.uploadPhotoFile(outFile).onSuccess { fileId ->
                         repo.setPhotoDriveFileId(id, fileId)
                     }
-                } catch (e: Exception) { /* stays local-only; metadata still syncs */ }
+                } catch (e: Exception) { /* the immediate sync job below will retry this */ }
+                SyncScheduler.requestImmediateSync(context)
             }
-        }
-    }
-
-    private var syncJob: kotlinx.coroutines.Job? = null
-    private fun scheduleSync() {
-        syncJob?.cancel()
-        syncJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(3000)
-            val account = prefs.googleAccount.first()
-            val enabled = prefs.isAutoSyncEnabled.first()
-            if (!account.isNullOrBlank() && enabled) driveSync.uploadAll()
         }
     }
 
