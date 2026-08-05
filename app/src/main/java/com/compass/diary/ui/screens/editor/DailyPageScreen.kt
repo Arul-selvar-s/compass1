@@ -310,7 +310,6 @@ fun DailyPageScreen(
         }
     }
 }
-
 @Composable
 private fun NoteBubble(msg: NoteMessageEntity, timeFmt: SimpleDateFormat, onStar: () -> Unit) {
     var starred by remember(msg.id) { mutableStateOf(false) }
@@ -320,8 +319,11 @@ private fun NoteBubble(msg: NoteMessageEntity, timeFmt: SimpleDateFormat, onStar
             .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(14.dp))
             .padding(12.dp)
     ) {
-        Text(msg.text, style = MaterialTheme.typography.bodyLarge)
+        androidx.compose.foundation.text.selection.SelectionContainer {
+            Text(msg.text, style = MaterialTheme.typography.bodyLarge)
+        }
         Spacer(Modifier.height(6.dp))
+
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             Text(timeFmt.format(Date(msg.sentAt)), style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
