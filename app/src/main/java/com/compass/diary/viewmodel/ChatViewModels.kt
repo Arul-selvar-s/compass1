@@ -14,6 +14,7 @@ import com.compass.diary.data.repository.DiaryRepository
 import com.compass.diary.data.repository.DriveSync
 import com.compass.diary.util.AudioCompressor
 import com.compass.diary.util.PreferencesManager
+import com.compass.diary.util.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
@@ -25,7 +26,8 @@ import javax.inject.Inject
 class SongViewModel @Inject constructor(
     private val repo: DiaryRepository,
     private val driveSync: DriveSync,
-    private val prefs: PreferencesManager
+    private val prefs: PreferencesManager,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     val songs: StateFlow<List<SongMessageEntity>> = repo.getAllSongs()
@@ -40,6 +42,7 @@ class SongViewModel @Inject constructor(
             val enabled = prefs.isAutoSyncEnabled.first()
             if (!account.isNullOrBlank() && enabled) driveSync.uploadAll()
         }
+        SyncScheduler.requestImmediateSync(context)
     }
 
     fun sendSong(url: String, note: String?, sender: String, sentAt: Long = System.currentTimeMillis()) {
@@ -147,7 +150,6 @@ class VoiceViewModel @Inject constructor(
         recordingFile = null
     }
 
-    /** Imports always go through AudioCompressor — enforces the "always compress" rule. */
     fun importAudio(uri: Uri, note: String?, sentAt: Long = System.currentTimeMillis()) {
         val cleanNote: String? = note?.trim()?.takeIf { it.isNotBlank() }
         viewModelScope.launch {
@@ -215,6 +217,7 @@ class VoiceViewModel @Inject constructor(
             val enabled = prefs.isAutoSyncEnabled.first()
             if (!account.isNullOrBlank() && enabled) driveSync.uploadAll()
         }
+        SyncScheduler.requestImmediateSync(context)
     }
 
     override fun onCleared() {
