@@ -68,5 +68,7 @@ dependencies {
     implementation(libs.google.auth)
     implementation(libs.gson)
     implementation("net.lingala.zip4j:zip4j:2.11.5")
-
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("androidx.hilt:hilt-work:1.2.0")
+    ksp("androidx.hilt:hilt-compiler:1.2.0")
 }
