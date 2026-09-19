@@ -33,6 +33,9 @@ class PhotoViewModel @Inject constructor(
     val allPhotos: StateFlow<List<PhotoEntity>> = repo.getAllPhotos()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val masterControlEnabled: StateFlow<Boolean> = prefs.isMasterControlEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
     private var pendingCaptureFile: File? = null
 
     fun createCaptureUri(): Uri {
@@ -63,11 +66,23 @@ class PhotoViewModel @Inject constructor(
                     driveSync.uploadPhotoFile(outFile).onSuccess { fileId ->
                         repo.setPhotoDriveFileId(id, fileId)
                     }
-                } catch (e: Exception) { /* the immediate sync job below will retry this */ }
+                } catch (e: Exception) { /* immediate sync job below will retry */ }
                 SyncScheduler.requestImmediateSync(context)
             }
         }
     }
 
     fun photoFile(fileName: String): File = File(photosDir(), fileName)
+
+    fun deletePhotoEntry(id: Long) {
+        viewModelScope.launch {
+            val p = repo.getPhotoById(id)
+            repo.deletePhoto(id)
+            if (p != null) {
+                val f = photoFile(p.fileName)
+                if (f.exists()) f.delete()
+            }
+            SyncScheduler.requestImmediateSync(context)
+        }
+    }
 }

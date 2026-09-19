@@ -109,6 +109,7 @@ class DriveSync @Inject constructor(
                     put("note",       s.note ?: JSONObject.NULL)
                     put("sender",     s.sender)
                     put("sentAt",     s.sentAt)
+                    put("title",      s.title ?: JSONObject.NULL)
                 })
             }
 
@@ -201,7 +202,8 @@ class DriveSync @Inject constructor(
                     youtubeUrl = o.getString("youtubeUrl"),
                     note       = if (o.isNull("note")) null else o.optString("note"),
                     sender     = o.getString("sender"),
-                    sentAt     = o.optLong("sentAt", System.currentTimeMillis())
+                    sentAt     = o.optLong("sentAt", System.currentTimeMillis()),
+                    title      = if (o.isNull("title")) null else o.optString("title")
                 )
             }
             repo.mergeSongsFromBackup(songs)

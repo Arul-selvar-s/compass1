@@ -8,8 +8,9 @@ data class SongMessageEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val youtubeUrl: String,
     val note: String? = null,
-    val sender: String,              // "JENMASANI" or "KUTTY_GOLU"
-    val sentAt: Long = System.currentTimeMillis()
+    val sender: String,
+    val sentAt: Long = System.currentTimeMillis(),
+    val title: String? = null
 )
 
 @Entity(tableName = "voice_messages")
@@ -18,6 +19,6 @@ data class VoiceMessageEntity(
     val audioFileName: String,
     val note: String? = null,
     val durationMs: Long = 0,
-    val sourceType: String,          // "RECORDED" or "IMPORTED"
+    val sourceType: String,
     val sentAt: Long = System.currentTimeMillis()
 )

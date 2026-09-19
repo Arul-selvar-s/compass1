@@ -22,4 +22,10 @@ interface NoteDao {
 
     @Query("SELECT * FROM note_messages WHERE dateKey = :dateKey AND text = :text AND sentAt = :sentAt LIMIT 1")
     suspend fun findMatch(dateKey: String, text: String, sentAt: Long): NoteMessageEntity?
+
+    @Query("UPDATE note_messages SET text = :text WHERE id = :id")
+    suspend fun updateText(id: Long, text: String)
+
+    @Query("DELETE FROM note_messages WHERE id = :id")
+    suspend fun deleteById(id: Long)
 }

@@ -45,7 +45,7 @@ fun ExportScreen(
     var fromDate by remember { mutableStateOf<LocalDate?>(null) }
     var toDate by remember { mutableStateOf<LocalDate?>(null) }
     var oneDay by remember { mutableStateOf(LocalDate.now()) }
-    var sender by remember { mutableStateOf<String?>(null) }
+    var sender by remember { mutableStateOf<String?>(null) } // null = all
 
     var showFromPicker by remember { mutableStateOf(false) }
     var showToPicker by remember { mutableStateOf(false) }
@@ -67,6 +67,7 @@ fun ExportScreen(
             ExportType.NOTES  -> viewModel.exportNotes(fromDate, toDate)
             ExportType.SONGS  -> viewModel.exportSongs(fromDate, toDate, sender)
             ExportType.VOICE  -> viewModel.exportVoice(fromDate, toDate)
+            ExportType.PHOTOS -> viewModel.exportPhotos(fromDate, toDate)
             ExportType.ONE_DAY -> viewModel.exportOneDay(oneDay)
             ExportType.FULL   -> viewModel.exportFull(fromDate, toDate)
         }
@@ -102,6 +103,7 @@ fun ExportScreen(
                 ExportOption(type == ExportType.NOTES, "Notes only", "All your written messages") { type = ExportType.NOTES }
                 ExportOption(type == ExportType.SONGS, "Songs only", "All YouTube links shared") { type = ExportType.SONGS }
                 ExportOption(type == ExportType.VOICE, "Voice only", "All voice messages + audio files") { type = ExportType.VOICE }
+                ExportOption(type == ExportType.PHOTOS, "Photos only", "All daily photos — including a replaced one, if you took two") { type = ExportType.PHOTOS }
                 ExportOption(type == ExportType.ONE_DAY, "One day", "Notes, songs, voice & both photos for a single date") { type = ExportType.ONE_DAY }
                 ExportOption(type == ExportType.FULL, "Full backup", "Everything, organised by date") { type = ExportType.FULL }
             }

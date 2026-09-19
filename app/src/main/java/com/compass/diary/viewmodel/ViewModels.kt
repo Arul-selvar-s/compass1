@@ -26,6 +26,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.util.*
@@ -227,6 +228,23 @@ class DiaryViewModel @Inject constructor(
         }
     }
 
+    val masterControlEnabled: StateFlow<Boolean> = prefs.isMasterControlEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun editNote(id: Long, dateKey: String, newText: String) {
+        viewModelScope.launch {
+            repo.editNoteMessage(id, dateKey, newText)
+            scheduleSync()
+        }
+    }
+
+    fun deleteNote(id: Long, dateKey: String) {
+        viewModelScope.launch {
+            repo.deleteNoteMessage(id, dateKey)
+            scheduleSync()
+        }
+    }
+
     fun moodForDate(dateKey: String) = repo.getMoodForDate(dateKey)
 
     fun saveMood(dateKey: String, missedPercent: Int, lovedPercent: Int, onResult: (Boolean) -> Unit) {
@@ -323,6 +341,15 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setGoogleAccount(null); prefs.setSetupComplete(false) }
     }
 
+    val masterControlEnabled: StateFlow<Boolean> = prefs.isMasterControlEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun checkMasterPassword(input: String): Boolean = input == "0518"
+
+    fun setMasterControl(enabled: Boolean) {
+        viewModelScope.launch { prefs.setMasterControlEnabled(enabled) }
+    }
+
     private val _updateInfo = MutableStateFlow<UpdateInfo?>(null)
     val updateInfo: StateFlow<UpdateInfo?> = _updateInfo
     private val _checkingUpdate = MutableStateFlow(false)
@@ -349,7 +376,8 @@ class SettingsViewModel @Inject constructor(
 @HiltViewModel
 class AIViewModel @Inject constructor(
     private val prefs: PreferencesManager,
-    private val repo: DiaryRepository
+    private val repo: DiaryRepository,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     data class Message(
@@ -382,37 +410,92 @@ class AIViewModel @Inject constructor(
         viewModelScope.launch {
             val key = prefs.anthropicApiKey.first()
             if (key.isNullOrBlank()) {
-                _messages.update { it + Message(role = "assistant", content = "Add your Anthropic API key in Settings → AI Assistant.") }
+                _messages.update { it + Message(role = "assistant", content = "Add your Gemini API key in Settings → AI Assistant.") }
                 _thinking.value = false
                 return@launch
             }
 
-            val context = allEntries.value
+            val notesContext = allEntries.value
                 .filter { it.plainText.isNotBlank() }
                 .joinToString("\n---\n") { "Date: ${it.title}\n${it.plainText}" }
                 .take(80_000)
 
+            val songs = repo.getAllSongsForBackup()
+            val songsContext = if (songs.isEmpty()) "" else "\n\nSongs shared:\n" + songs.joinToString("\n") { s ->
+                val sender = if (s.sender == "JENMASANI") "Jenmasani" else "Kutty Golu"
+                "- $sender sent ${s.youtubeUrl}${if (!s.note.isNullOrBlank()) " (note: ${s.note})" else ""}"
+            }.take(10_000)
+
+            val voice = repo.getAllVoiceForBackup()
+            val voiceContext = if (voice.isEmpty()) "" else "\n\nVoice messages (metadata only — the audio itself can't be transcribed):\n" +
+                voice.joinToString("\n") { v ->
+                    "- ${v.durationMs / 1000}s recording${if (!v.note.isNullOrBlank()) " (note: ${v.note})" else ""}"
+                }.take(5_000)
+
+            val fullContext = notesContext + songsContext + voiceContext
+
+            val photosDir = File(context.filesDir, "photos")
+            val recentPhotos = repo.getAllPhotosForBackup()
+                .sortedByDescending { it.takenAt }
+                .take(3)
+                .mapNotNull { p ->
+                    val f = File(photosDir, p.fileName)
+                    if (f.exists()) f.readBytes() else null
+                }
+
             try {
+                val parts = JSONArray().apply {
+                    put(JSONObject().apply { put("text", question) })
+                    recentPhotos.forEach { bytes ->
+                        put(JSONObject().apply {
+                            put("inlineData", JSONObject().apply {
+                                put("mimeType", "image/jpeg")
+                                put("data", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
+                            })
+                        })
+                    }
+                }
+
                 val body = JSONObject().apply {
-                    put("model", "claude-sonnet-4-6")
-                    put("max_tokens", 1024)
-                    put("system", "You are a diary assistant. Answer questions about these diary entries and cite dates.\n\n$context")
-                    put("messages", JSONArray().apply {
-                        put(JSONObject().apply { put("role", "user"); put("content", question) })
+                    put("systemInstruction", JSONObject().apply {
+                        put("parts", JSONArray().apply {
+                            put(JSONObject().apply {
+                                put("text", "You are a private diary assistant. You can see the user's written notes, shared songs, voice message notes, and their most recent photos. Answer questions about their diary and cite dates when relevant.\n\n$fullContext")
+                            })
+                        })
+                    })
+                    put("contents", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("role", "user")
+                            put("parts", parts)
+                        })
+                    })
+                    put("generationConfig", JSONObject().apply {
+                        put("maxOutputTokens", 1024)
                     })
                 }.toString()
 
                 val req = Request.Builder()
-                    .url("https://api.anthropic.com/v1/messages")
-                    .addHeader("x-api-key", key)
-                    .addHeader("anthropic-version", "2023-06-01")
+                    .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
+                    .addHeader("x-goog-api-key", key)
                     .addHeader("content-type", "application/json")
                     .post(body.toRequestBody("application/json".toMediaType()))
                     .build()
 
                 val resp = withContext(Dispatchers.IO) { http.newCall(req).execute() }
-                val text = JSONObject(resp.body?.string() ?: "{}")
-                    .getJSONArray("content").getJSONObject(0).getString("text")
+                val responseBody = resp.body?.string() ?: "{}"
+                val json = JSONObject(responseBody)
+
+                if (!resp.isSuccessful) {
+                    val errMsg = json.optJSONObject("error")?.optString("message") ?: "Unknown error"
+                    _messages.update { it + Message(role = "assistant", content = "Error: $errMsg") }
+                    _thinking.value = false
+                    return@launch
+                }
+
+                val text = json.getJSONArray("candidates")
+                    .getJSONObject(0).getJSONObject("content")
+                    .getJSONArray("parts").getJSONObject(0).getString("text")
                 val dates = Regex("""\d{4}-\d{2}-\d{2}""").findAll(text)
                     .map { it.value }.distinct().take(3).toList()
 

@@ -28,4 +28,10 @@ interface PhotoDao {
 
     @Query("SELECT * FROM daily_photos WHERE dateKey = :dateKey AND fileName = :fileName LIMIT 1")
     suspend fun findMatch(dateKey: String, fileName: String): PhotoEntity?
+
+    @Query("SELECT * FROM daily_photos WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): PhotoEntity?
+
+    @Query("DELETE FROM daily_photos WHERE id = :id")
+    suspend fun deleteById(id: Long)
 }

@@ -26,6 +26,7 @@ class PreferencesManager @Inject constructor(@ApplicationContext private val ctx
         val KEY_NOTIFICATIONS  = booleanPreferencesKey("notifications")
         val KEY_ANTHROPIC_KEY  = stringPreferencesKey("anthropic_key")
         val KEY_LAST_SYNC      = longPreferencesKey("last_sync")
+        val KEY_MASTER_CONTROL = booleanPreferencesKey("master_control")
     }
 
     private val ds = ctx.dataStore
@@ -39,6 +40,7 @@ class PreferencesManager @Inject constructor(@ApplicationContext private val ctx
     val isAutoSyncEnabled: Flow<Boolean> = ds.data.catch { emit(emptyPreferences()) }.map { it[KEY_AUTO_SYNC] ?: true }
     val isNotificationsEnabled: Flow<Boolean> = ds.data.catch { emit(emptyPreferences()) }.map { it[KEY_NOTIFICATIONS] ?: false }
     val anthropicApiKey: Flow<String?>   = ds.data.catch { emit(emptyPreferences()) }.map { it[KEY_ANTHROPIC_KEY] }
+    val isMasterControlEnabled: Flow<Boolean> = ds.data.catch { emit(emptyPreferences()) }.map { it[KEY_MASTER_CONTROL] ?: false }
 
     suspend fun setSetupComplete(v: Boolean) = ds.edit { it[KEY_SETUP_COMPLETE] = v }
     suspend fun setFirstLaunch(v: Boolean)   = ds.edit { it[KEY_FIRST_LAUNCH] = v }
@@ -50,4 +52,5 @@ class PreferencesManager @Inject constructor(@ApplicationContext private val ctx
     suspend fun setNotificationsEnabled(v: Boolean) = ds.edit { it[KEY_NOTIFICATIONS] = v }
     suspend fun setAnthropicApiKey(v: String)   = ds.edit { it[KEY_ANTHROPIC_KEY] = v }
     suspend fun setLastSync(v: Long)            = ds.edit { it[KEY_LAST_SYNC] = v }
+    suspend fun setMasterControlEnabled(v: Boolean) = ds.edit { it[KEY_MASTER_CONTROL] = v }
 }

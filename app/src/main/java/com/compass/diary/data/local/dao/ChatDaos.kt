@@ -20,6 +20,15 @@ interface SongDao {
 
     @Query("SELECT * FROM song_messages WHERE youtubeUrl = :url AND sender = :sender AND sentAt = :sentAt LIMIT 1")
     suspend fun findMatch(url: String, sender: String, sentAt: Long): SongMessageEntity?
+
+    @Query("UPDATE song_messages SET title = :title WHERE id = :id")
+    suspend fun updateTitle(id: Long, title: String)
+
+    @Query("UPDATE song_messages SET youtubeUrl = :url, note = :note WHERE id = :id")
+    suspend fun update(id: Long, url: String, note: String?)
+
+    @Query("DELETE FROM song_messages WHERE id = :id")
+    suspend fun deleteById(id: Long)
 }
 
 @Dao
@@ -35,4 +44,13 @@ interface VoiceMessageDao {
 
     @Query("SELECT * FROM voice_messages WHERE audioFileName = :fileName LIMIT 1")
     suspend fun findMatch(fileName: String): VoiceMessageEntity?
+
+    @Query("SELECT * FROM voice_messages WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): VoiceMessageEntity?
+
+    @Query("UPDATE voice_messages SET note = :note WHERE id = :id")
+    suspend fun updateNote(id: Long, note: String?)
+
+    @Query("DELETE FROM voice_messages WHERE id = :id")
+    suspend fun deleteById(id: Long)
 }

@@ -46,6 +46,28 @@ class DiaryRepository @Inject constructor(
         resyncDaySummary(dateKey)
     }
 
+    // ── Master Control only — normal flow never calls these ──────
+    suspend fun editNoteMessage(id: Long, dateKey: String, newText: String) {
+        noteDao.updateText(id, newText.trim())
+        resyncDaySummary(dateKey)
+    }
+
+    suspend fun deleteNoteMessage(id: Long, dateKey: String) {
+        noteDao.deleteById(id)
+        resyncDaySummary(dateKey)
+    }
+
+    suspend fun editSong(id: Long, url: String, note: String?) = songDao.update(id, url.trim(), note?.trim()?.takeIf { it.isNotBlank() })
+    suspend fun deleteSong(id: Long) = songDao.deleteById(id)
+
+    suspend fun editVoiceNote(id: Long, note: String?) = voiceMessageDao.updateNote(id, note?.trim()?.takeIf { it.isNotBlank() })
+    suspend fun getVoiceById(id: Long) = voiceMessageDao.getById(id)
+    suspend fun deleteVoice(id: Long) = voiceMessageDao.deleteById(id)
+
+    suspend fun getPhotoById(id: Long) = photoDao.getById(id)
+    suspend fun deletePhoto(id: Long) = photoDao.deleteById(id)
+    // ───────────────────────────────────────────────────────────
+
     suspend fun mergeNotesFromBackup(items: List<NoteMessageEntity>) {
         val affectedDates = mutableSetOf<String>()
         items.forEach { remote ->
@@ -66,7 +88,8 @@ class DiaryRepository @Inject constructor(
     }
 
     suspend fun autoLockPastEntries() {
-        // No-op under the chat model — every note message is immutable on send.
+        // No-op under the chat model — every note message is immutable on send
+        // unless Master Control is on.
     }
 
     suspend fun starWholeDay(dateKey: String) {
@@ -103,6 +126,7 @@ class DiaryRepository @Inject constructor(
     fun getAllSongs(): Flow<List<SongMessageEntity>> = songDao.getAllSongs()
     suspend fun getAllSongsForBackup() = songDao.getAllSongsForBackup()
     suspend fun addSong(song: SongMessageEntity): Long = songDao.insertSong(song)
+    suspend fun setSongTitle(id: Long, title: String) = songDao.updateTitle(id, title)
 
     suspend fun mergeSongsFromBackup(items: List<SongMessageEntity>) {
         items.forEach { remote ->
@@ -129,9 +153,6 @@ class DiaryRepository @Inject constructor(
     suspend fun addPhoto(p: PhotoEntity): Long = photoDao.insertPhoto(p)
     suspend fun setPhotoDriveFileId(id: Long, fileId: String) = photoDao.setDriveFileId(id, fileId)
 
-    /** Returns every photo that now needs its bytes downloaded — either because it's
-     *  brand new, or because it already existed locally but is only now getting a
-     *  Drive file attached. */
     suspend fun mergePhotosFromBackup(items: List<PhotoEntity>): List<PhotoEntity> {
         val needDownload = mutableListOf<PhotoEntity>()
         items.forEach { remote ->

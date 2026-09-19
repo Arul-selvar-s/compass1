@@ -14,6 +14,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.*
@@ -92,6 +94,7 @@ fun SongsScreen(
     viewModel: SongViewModel = hiltViewModel()
 ) {
     val songs by viewModel.songs.collectAsState()
+    val masterOn by viewModel.masterControlEnabled.collectAsState()
     val context = LocalContext.current
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -101,6 +104,8 @@ fun SongsScreen(
     var noteInput by remember { mutableStateOf("") }
     var selectedDateMillis by remember { mutableStateOf<Long?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var editingSong by remember { mutableStateOf<SongMessageEntity?>(null) }
+    var deletingSong by remember { mutableStateOf<SongMessageEntity?>(null) }
 
     LaunchedEffect(songs.size) {
         if (songs.isNotEmpty()) scope.launch { listState.animateScrollToItem(songs.size - 1) }
@@ -135,6 +140,14 @@ fun SongsScreen(
         },
         bottomBar = {
             Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(12.dp)) {
+                if (masterOn) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+                        Icon(Icons.Default.Edit, null, Modifier.size(14.dp), tint = CompassColors.Error)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Master Control on — edit/delete icons visible on each song",
+                            style = MaterialTheme.typography.labelSmall, color = CompassColors.Error)
+                    }
+                }
                 OutlinedTextField(
                     value = urlInput, onValueChange = { urlInput = it },
                     placeholder = { Text("Paste a YouTube link…") }, singleLine = true,
@@ -198,7 +211,12 @@ fun SongsScreen(
                         item(key = "date_${song.id}") { DatePill(dateLabel(song.sentAt)) }
                     }
                     item(key = song.id) {
-                        SongBubble(song, timeFmt) { openYoutube(context, song.youtubeUrl) }
+                        SongBubble(
+                            song, timeFmt, masterOn = masterOn,
+                            onOpen = { openYoutube(context, song.youtubeUrl) },
+                            onEdit = { editingSong = song },
+                            onDelete = { deletingSong = song }
+                        )
                     }
                 }
             }
@@ -217,6 +235,46 @@ fun SongsScreen(
             },
             dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } }
         ) { DatePicker(state = state) }
+    }
+
+    if (editingSong != null) {
+        var url by remember(editingSong!!.id) { mutableStateOf(editingSong!!.youtubeUrl) }
+        var note by remember(editingSong!!.id) { mutableStateOf(editingSong!!.note ?: "") }
+        AlertDialog(
+            onDismissRequest = { editingSong = null },
+            title = { Text("Edit song") },
+            text = {
+                Column {
+                    OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth(), singleLine = true,
+                        isError = url.isNotBlank() && !isValidYoutubeUrl(url), placeholder = { Text("YouTube link") })
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(note, { note = it }, Modifier.fillMaxWidth(), singleLine = true,
+                        placeholder = { Text("Note") })
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { viewModel.editSong(editingSong!!.id, url, note); editingSong = null },
+                    enabled = isValidYoutubeUrl(url)
+                ) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { editingSong = null }) { Text("Cancel") } }
+        )
+    }
+
+    if (deletingSong != null) {
+        AlertDialog(
+            onDismissRequest = { deletingSong = null },
+            icon = { Icon(Icons.Default.Delete, null, tint = CompassColors.Error) },
+            title = { Text("Delete this song?") },
+            text = { Text("This permanently removes it — Master Control only.") },
+            confirmButton = {
+                TextButton(onClick = { viewModel.deleteSong(deletingSong!!.id); deletingSong = null }) {
+                    Text("Delete", color = CompassColors.Error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { deletingSong = null }) { Text("Cancel") } }
+        )
     }
 }
 
@@ -239,7 +297,14 @@ private fun Avatar(letter: String, color: Color) {
 }
 
 @Composable
-private fun SongBubble(song: SongMessageEntity, timeFmt: SimpleDateFormat, onOpen: () -> Unit) {
+private fun SongBubble(
+    song: SongMessageEntity,
+    timeFmt: SimpleDateFormat,
+    masterOn: Boolean,
+    onOpen: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
     val isRight = song.sender == SENDER_JENMASANI
     val bubbleColor = if (isRight) CompassColors.Gold400.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant
     val avatarLetter = if (isRight) "Y" else "A"
@@ -284,6 +349,19 @@ private fun SongBubble(song: SongMessageEntity, timeFmt: SimpleDateFormat, onOpe
             Text(timeFmt.format(Date(song.sentAt)), style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                 modifier = Modifier.align(Alignment.End))
+
+            if (masterOn) {
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.align(Alignment.End)) {
+                    IconButton(onClick = onEdit, Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Edit, "Edit", tint = CompassColors.Blue400, modifier = Modifier.size(14.dp))
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    IconButton(onClick = onDelete, Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Delete, "Delete", tint = CompassColors.Error, modifier = Modifier.size(14.dp))
+                    }
+                }
+            }
         }
 
         if (isRight) { Spacer(Modifier.width(8.dp)); Avatar(avatarLetter, avatarColor) }

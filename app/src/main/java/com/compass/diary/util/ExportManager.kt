@@ -2,6 +2,7 @@ package com.compass.diary.util
 
 import com.compass.diary.data.local.entity.MoodEntity
 import com.compass.diary.data.local.entity.NoteMessageEntity
+import com.compass.diary.data.local.entity.PhotoEntity
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.data.local.entity.VoiceMessageEntity
 import net.lingala.zip4j.ZipFile
@@ -44,6 +45,17 @@ object ExportManager {
         voice.sortedBy { it.sentAt }.forEach { v ->
             val d = Date(v.sentAt)
             sb.append("${dateFmt.format(d)},${timeFmt.format(d)},${v.audioFileName},${v.durationMs / 1000},${v.sourceType},${csvEscape(v.note ?: "")}\n")
+        }
+        return sb.toString()
+    }
+
+    /** Lists every photo for the exported range/date — including a replaced (hidden-in-app)
+     *  photo, since "hidden from the UI" was never meant to mean "gone" for export purposes. */
+    fun photosManifestCsv(photos: List<PhotoEntity>): String {
+        val sb = StringBuilder("Date,Time,FileName\n")
+        photos.sortedBy { it.takenAt }.forEach { p ->
+            val d = Date(p.takenAt)
+            sb.append("${dateFmt.format(d)},${timeFmt.format(d)},${p.fileName}\n")
         }
         return sb.toString()
     }

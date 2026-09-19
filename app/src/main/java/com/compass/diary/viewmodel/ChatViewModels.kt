@@ -15,6 +15,7 @@ import com.compass.diary.data.repository.DriveSync
 import com.compass.diary.util.AudioCompressor
 import com.compass.diary.util.PreferencesManager
 import com.compass.diary.util.SyncScheduler
+import com.compass.diary.util.YoutubeMetadataFetcher
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
@@ -33,6 +34,9 @@ class SongViewModel @Inject constructor(
     val songs: StateFlow<List<SongMessageEntity>> = repo.getAllSongs()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val masterControlEnabled: StateFlow<Boolean> = prefs.isMasterControlEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
     private var syncJob: kotlinx.coroutines.Job? = null
     private fun scheduleSync() {
         syncJob?.cancel()
@@ -50,7 +54,7 @@ class SongViewModel @Inject constructor(
         if (cleanUrl.isBlank()) return
         val cleanNote: String? = note?.trim()?.takeIf { it.isNotBlank() }
         viewModelScope.launch {
-            repo.addSong(
+            val id = repo.addSong(
                 SongMessageEntity(
                     youtubeUrl = cleanUrl,
                     note       = cleanNote,
@@ -58,6 +62,26 @@ class SongViewModel @Inject constructor(
                     sentAt     = sentAt
                 )
             )
+            scheduleSync()
+            val title = YoutubeMetadataFetcher.fetchTitle(cleanUrl)
+            if (title != null) repo.setSongTitle(id, title)
+        }
+    }
+
+    fun editSong(id: Long, url: String, note: String?) {
+        val cleanUrl = url.trim()
+        if (cleanUrl.isBlank()) return
+        viewModelScope.launch {
+            repo.editSong(id, cleanUrl, note)
+            scheduleSync()
+            val title = YoutubeMetadataFetcher.fetchTitle(cleanUrl)
+            if (title != null) repo.setSongTitle(id, title)
+        }
+    }
+
+    fun deleteSong(id: Long) {
+        viewModelScope.launch {
+            repo.deleteSong(id)
             scheduleSync()
         }
     }
@@ -73,6 +97,9 @@ class VoiceViewModel @Inject constructor(
 
     val messages: StateFlow<List<VoiceMessageEntity>> = repo.getAllVoiceMessages()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val masterControlEnabled: StateFlow<Boolean> = prefs.isMasterControlEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording
@@ -205,6 +232,25 @@ class VoiceViewModel @Inject constructor(
             _playingId.value = msg.id
         } catch (e: Exception) {
             _playingId.value = null
+        }
+    }
+
+    fun editVoiceNote(id: Long, note: String?) {
+        viewModelScope.launch {
+            repo.editVoiceNote(id, note)
+            scheduleSync()
+        }
+    }
+
+    fun deleteVoiceMessage(id: Long) {
+        viewModelScope.launch {
+            val v = repo.getVoiceById(id)
+            repo.deleteVoice(id)
+            if (v != null) {
+                val f = File(voiceDir(), v.audioFileName)
+                if (f.exists()) f.delete()
+            }
+            scheduleSync()
         }
     }
 

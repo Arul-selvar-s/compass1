@@ -17,10 +17,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Star
@@ -85,6 +88,7 @@ fun DailyPageScreen(
     val playingId by voiceViewModel.playingId.collectAsState()
     val dayPhotos by remember(dateKey) { photoViewModel.photosForDate(dateKey) }.collectAsState(initial = emptyList())
     val mood      by remember(dateKey) { viewModel.moodForDate(dateKey) }.collectAsState(initial = null)
+    val masterOn  by viewModel.masterControlEnabled.collectAsState()
 
     val context = LocalContext.current
     val listState = rememberLazyListState()
@@ -98,6 +102,9 @@ fun DailyPageScreen(
     var showCapturePreview by remember { mutableStateOf(false) }
     var pendingCaptureUri by remember { mutableStateOf<Uri?>(null) }
     var showFullPhoto by remember { mutableStateOf(false) }
+    var editingNote by remember { mutableStateOf<NoteMessageEntity?>(null) }
+    var deletingNote by remember { mutableStateOf<NoteMessageEntity?>(null) }
+    var deletingPhoto by remember { mutableStateOf(false) }
 
     var missedSlider by remember(dateKey) { mutableFloatStateOf(50f) }
     var lovedSlider by remember(dateKey) { mutableFloatStateOf(50f) }
@@ -119,6 +126,8 @@ fun DailyPageScreen(
                 PackageManager.PERMISSION_GRANTED
         if (granted) launchCamera() else cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
     }
+
+    val canTakePhoto = dayPhotos.size < 2 || masterOn
 
     val dayDate = remember(dateKey) { runCatching { LocalDate.parse(dateKey) }.getOrNull() }
     val songsToday = remember(allSongs, dateKey) { allSongs.filter { dayDate != null && localDateOf(it.sentAt) == dayDate } }
@@ -164,15 +173,12 @@ fun DailyPageScreen(
                                     style = MaterialTheme.typography.labelSmall, color = CompassColors.Blue400)
                             }
                         }
-
-                        
-                        
                     }
                 },
                 actions = {
-                    IconButton(onClick = { if (dayPhotos.size < 2) requestCamera() }, enabled = dayPhotos.size < 2) {
+                    IconButton(onClick = { if (canTakePhoto) requestCamera() }, enabled = canTakePhoto) {
                         Icon(Icons.Default.CameraAlt, "Take photo",
-                            tint = if (dayPhotos.size < 2) LocalContentColor.current else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                            tint = if (canTakePhoto) LocalContentColor.current else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
                     }
                     IconButton(onClick = { viewModel.starWholeDay(dateKey) }) {
                         Icon(Icons.Default.Star, "Star this day", tint = CompassColors.Star)
@@ -202,6 +208,15 @@ fun DailyPageScreen(
                             },
                             modifier = Modifier.align(Alignment.End)
                         ) { Text("Save") }
+                    }
+                }
+
+                if (masterOn) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Edit, null, Modifier.size(14.dp), tint = CompassColors.Error)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Master Control on — edit/delete icons visible on each note",
+                            style = MaterialTheme.typography.labelSmall, color = CompassColors.Error)
                     }
                 }
 
@@ -265,7 +280,13 @@ fun DailyPageScreen(
             }
 
             items(messages.reversed(), key = { it.id }) { msg ->
-                NoteBubble(msg, timeFmt) { viewModel.starNoteMessage(dateKey, msg.text) }
+                NoteBubble(
+                    msg, timeFmt,
+                    masterOn = masterOn,
+                    onStar = { viewModel.starNoteMessage(dateKey, msg.text) },
+                    onEdit = { editingNote = msg },
+                    onDelete = { deletingNote = msg }
+                )
             }
         }
     }
@@ -303,15 +324,87 @@ fun DailyPageScreen(
     if (showFullPhoto && latestPhoto != null) {
         val file = photoViewModel.photoFile(latestPhoto.fileName)
         Dialog(onDismissRequest = { showFullPhoto = false }) {
-            val bmp = remember(latestPhoto.fileName) { runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull() }
-            if (bmp != null) {
-                Image(bmp.asImageBitmap(), "Photo", Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)), contentScale = ContentScale.Fit)
+            Column {
+                val bmp = remember(latestPhoto.fileName) { runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull() }
+                if (bmp != null) {
+                    Image(bmp.asImageBitmap(), "Photo", Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)), contentScale = ContentScale.Fit)
+                }
+                if (masterOn) {
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = { deletingPhoto = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = CompassColors.Error)
+                    ) {
+                        Icon(Icons.Default.Delete, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp))
+                        Text("Delete this photo")
+                    }
+                }
             }
         }
     }
+
+    if (deletingPhoto && latestPhoto != null) {
+        AlertDialog(
+            onDismissRequest = { deletingPhoto = false },
+            icon = { Icon(Icons.Default.Delete, null, tint = CompassColors.Error) },
+            title = { Text("Delete this photo?") },
+            text = { Text("This permanently removes the photo — Master Control only, this cannot be undone from within the app.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    photoViewModel.deletePhotoEntry(latestPhoto.id)
+                    deletingPhoto = false
+                    showFullPhoto = false
+                }) { Text("Delete", color = CompassColors.Error) }
+            },
+            dismissButton = { TextButton(onClick = { deletingPhoto = false }) { Text("Cancel") } }
+        )
+    }
+
+    if (editingNote != null) {
+        var text by remember(editingNote!!.id) { mutableStateOf(editingNote!!.text) }
+        AlertDialog(
+            onDismissRequest = { editingNote = null },
+            title = { Text("Edit note") },
+            text = {
+                OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth(), minLines = 2, maxLines = 6)
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.editNote(editingNote!!.id, dateKey, text)
+                    editingNote = null
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { editingNote = null }) { Text("Cancel") } }
+        )
+    }
+
+    if (deletingNote != null) {
+        AlertDialog(
+            onDismissRequest = { deletingNote = null },
+            icon = { Icon(Icons.Default.Delete, null, tint = CompassColors.Error) },
+            title = { Text("Delete this note?") },
+            text = { Text("This permanently removes it — Master Control only.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteNote(deletingNote!!.id, dateKey)
+                    deletingNote = null
+                }) { Text("Delete", color = CompassColors.Error) }
+            },
+            dismissButton = { TextButton(onClick = { deletingNote = null }) { Text("Cancel") } }
+        )
+    }
 }
+
 @Composable
-private fun NoteBubble(msg: NoteMessageEntity, timeFmt: SimpleDateFormat, onStar: () -> Unit) {
+private fun NoteBubble(
+    msg: NoteMessageEntity,
+    timeFmt: SimpleDateFormat,
+    masterOn: Boolean,
+    onStar: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
     var starred by remember(msg.id) { mutableStateOf(false) }
     Column(
         Modifier
@@ -319,17 +412,28 @@ private fun NoteBubble(msg: NoteMessageEntity, timeFmt: SimpleDateFormat, onStar
             .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(14.dp))
             .padding(12.dp)
     ) {
-        androidx.compose.foundation.text.selection.SelectionContainer {
+        SelectionContainer {
             Text(msg.text, style = MaterialTheme.typography.bodyLarge)
         }
         Spacer(Modifier.height(6.dp))
-
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             Text(timeFmt.format(Date(msg.sentAt)), style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
-            IconButton(onClick = { onStar(); starred = true }, Modifier.size(24.dp)) {
-                Icon(if (starred) Icons.Default.Star else Icons.Default.StarBorder, "Star",
-                    tint = if (starred) CompassColors.Star else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+            Row {
+                if (masterOn) {
+                    IconButton(onClick = onEdit, Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Edit, "Edit", tint = CompassColors.Blue400, modifier = Modifier.size(14.dp))
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    IconButton(onClick = onDelete, Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Delete, "Delete", tint = CompassColors.Error, modifier = Modifier.size(14.dp))
+                    }
+                    Spacer(Modifier.width(4.dp))
+                }
+                IconButton(onClick = { onStar(); starred = true }, Modifier.size(24.dp)) {
+                    Icon(if (starred) Icons.Default.Star else Icons.Default.StarBorder, "Star",
+                        tint = if (starred) CompassColors.Star else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                }
             }
         }
     }

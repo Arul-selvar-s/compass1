@@ -17,7 +17,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import javax.inject.Inject
 
-enum class ExportType { NOTES, SONGS, VOICE, ONE_DAY, FULL }
+enum class ExportType { NOTES, SONGS, VOICE, PHOTOS, ONE_DAY, FULL }
 
 @HiltViewModel
 class ExportViewModel @Inject constructor(
@@ -48,6 +48,7 @@ class ExportViewModel @Inject constructor(
             ExportType.NOTES  -> "compass_notes_$stamp.zip"
             ExportType.SONGS  -> "compass_songs_$stamp.zip"
             ExportType.VOICE  -> "compass_voice_$stamp.zip"
+            ExportType.PHOTOS -> "compass_photos_$stamp.zip"
             ExportType.ONE_DAY -> "compass_day_${day ?: LocalDate.now()}.zip"
             ExportType.FULL   -> "compass_full_backup_$stamp.zip"
         }
@@ -95,6 +96,28 @@ class ExportViewModel @Inject constructor(
         }
     }
 
+    /** Exports only photos — every photo in range, including a replaced/hidden one,
+     *  since "hidden from the app view" never meant "deleted" for these. Filter is
+     *  the same date-range system as Notes/Songs/Voice. */
+    fun exportPhotos(from: LocalDate?, to: LocalDate?) {
+        viewModelScope.launch {
+            _isExporting.value = true; _status.value = "Preparing…"
+            val filtered = repo.getAllPhotosForBackup().filter {
+                val d = runCatching { LocalDate.parse(it.dateKey) }.getOrNull()
+                d != null && inRange(d, from, to)
+            }
+            val workDir = freshWorkDir()
+            File(workDir, "photos_manifest.csv").writeText(ExportManager.photosManifestCsv(filtered))
+            val photosSrcDir = File(context.filesDir, "photos")
+            val outPhotosDir = File(workDir, "photos").apply { mkdirs() }
+            filtered.forEach { p ->
+                val src = File(photosSrcDir, p.fileName)
+                if (src.exists()) src.copyTo(File(outPhotosDir, p.fileName), overwrite = true)
+            }
+            finishZip(workDir, "photos")
+        }
+    }
+
     fun exportOneDay(day: LocalDate) {
         viewModelScope.launch {
             _isExporting.value = true; _status.value = "Preparing…"
@@ -118,6 +141,8 @@ class ExportViewModel @Inject constructor(
                 if (src.exists()) src.copyTo(File(outVoiceDir, v.audioFileName), overwrite = true)
             }
 
+            // Both photos for the day are included here, even the "hidden" one — this
+            // export is the one deliberate way to see a replaced/hidden photo again.
             val photosSrcDir = File(context.filesDir, "photos")
             val outPhotosDir = File(workDir, "photos").apply { mkdirs() }
             photos.forEach { p ->

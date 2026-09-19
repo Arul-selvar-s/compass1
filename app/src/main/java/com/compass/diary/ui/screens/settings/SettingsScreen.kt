@@ -22,6 +22,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.compass.diary.BuildConfig
 import com.compass.diary.ui.theme.CompassColors
 import com.compass.diary.viewmodel.SettingsViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,7 +46,28 @@ fun SettingsScreen(
     val updateInfo  by viewModel.updateInfo.collectAsState()
     val checkingUpd by viewModel.checkingUpdate.collectAsState()
     val updateMsg   by viewModel.updateCheckMessage.collectAsState()
+    val masterOn    by viewModel.masterControlEnabled.collectAsState()
     val context     = LocalContext.current
+    val scope       = rememberCoroutineScope()
+
+    var tapCount by remember { mutableStateOf(0) }
+    var showPasswordDlg by remember { mutableStateOf(false) }
+    var showMasterDlg by remember { mutableStateOf(false) }
+    var passwordError by remember { mutableStateOf(false) }
+
+    fun onCompassTapped() {
+        tapCount++
+        if (tapCount == 1) {
+            scope.launch {
+                delay(3000)
+                tapCount = 0
+            }
+        }
+        if (tapCount >= 10) {
+            tapCount = 0
+            showPasswordDlg = true
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -118,12 +141,12 @@ fun SettingsScreen(
             }
 
             Section("AI Assistant") {
-                SRow(Icons.Default.Key, "Anthropic API Key",
+                SRow(Icons.Default.Key, "Gemini API Key",
                     subtitle = if (apiKey.isNullOrBlank()) "Not configured" else "••••••••${apiKey?.takeLast(4)}",
                     onClick = { showApiDlg = true })
                 Div()
                 SRow(Icons.Default.Info, "About AI",
-                    subtitle = "Uses Claude to search and summarise your diary",
+                    subtitle = "Uses Gemini to search your notes, songs, voice notes, and recent photos",
                     onClick = {})
             }
 
@@ -160,7 +183,9 @@ fun SettingsScreen(
             }
 
             Section("About") {
-                SRow(Icons.Default.Info, "Compass", subtitle = "Version ${BuildConfig.VERSION_NAME}  •  No ads  •  No tracking", onClick = {})
+                SRow(Icons.Default.Info, "Compass",
+                    subtitle = "Version ${BuildConfig.VERSION_NAME}  •  No ads  •  No tracking",
+                    onClick = { onCompassTapped() })
                 Div()
                 SRow(
                     Icons.Default.SystemUpdate,
@@ -198,6 +223,19 @@ fun SettingsScreen(
                 SRow(Icons.Default.Lock, "Privacy", subtitle = "All data stored locally and on your own Google Drive", onClick = {})
             }
 
+            if (masterOn) {
+                Spacer(Modifier.height(4.dp))
+                Surface(color = CompassColors.Error.copy(alpha = 0.15f), shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Warning, null, tint = CompassColors.Error)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Master Control is ON — edit/delete unlocked everywhere",
+                            style = MaterialTheme.typography.bodySmall, color = CompassColors.Error)
+                    }
+                }
+            }
+
             Spacer(Modifier.height(8.dp))
             TextButton(
                 onClick = { viewModel.logout(); onLogout() },
@@ -217,18 +255,73 @@ fun SettingsScreen(
         var show by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { showApiDlg = false },
-            title = { Text("Anthropic API Key") },
+            title = { Text("Gemini API Key") },
             text = {
                 Column {
-                    Text("Get your key from console.anthropic.com", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Get your free key from aistudio.google.com/apikey", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(k, { k = it }, Modifier.fillMaxWidth(), placeholder = { Text("sk-ant-…") }, singleLine = true,
+                    OutlinedTextField(k, { k = it }, Modifier.fillMaxWidth(), placeholder = { Text("AIza…") }, singleLine = true,
                         visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
                         trailingIcon = { IconButton({ show = !show }) { Icon(if (show) Icons.Default.VisibilityOff else Icons.Default.Visibility, null) } })
                 }
             },
             confirmButton = { TextButton({ viewModel.setApiKey(k.trim()); showApiDlg = false }) { Text("Save") } },
             dismissButton = { TextButton({ showApiDlg = false }) { Text("Cancel") } }
+        )
+    }
+
+    if (showPasswordDlg) {
+        var input by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showPasswordDlg = false; passwordError = false },
+            title = { Text("Enter password") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = input,
+                        onValueChange = { input = it; passwordError = false },
+                        visualTransformation = PasswordVisualTransformation(),
+                        isError = passwordError,
+                        supportingText = { if (passwordError) Text("Incorrect password") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (viewModel.checkMasterPassword(input)) {
+                        showPasswordDlg = false
+                        showMasterDlg = true
+                    } else {
+                        passwordError = true
+                    }
+                }) { Text("Continue") }
+            },
+            dismissButton = { TextButton({ showPasswordDlg = false; passwordError = false }) { Text("Cancel") } }
+        )
+    }
+
+    if (showMasterDlg) {
+        AlertDialog(
+            onDismissRequest = { showMasterDlg = false },
+            icon = { Icon(Icons.Default.Warning, null, tint = CompassColors.Error) },
+            title = { Text("Master Control") },
+            text = {
+                Text(
+                    if (masterOn)
+                        "Master Control is currently ON. Turning it off restores normal rules — nothing already changed will be undone."
+                    else
+                        "Turning this on unlocks editing and deleting for notes, songs, voice messages, and photos across every signed-in device. Turn it off any time to go back to normal."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.setMasterControl(!masterOn); showMasterDlg = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = if (masterOn) CompassColors.Success else CompassColors.Error)
+                ) { Text(if (masterOn) "Turn OFF" else "Turn ON") }
+            },
+            dismissButton = { TextButton({ showMasterDlg = false }) { Text("Cancel") } }
         )
     }
 }

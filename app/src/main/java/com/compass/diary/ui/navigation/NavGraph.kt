@@ -7,7 +7,9 @@ import com.compass.diary.ui.screens.ai.AIAssistantScreen
 import com.compass.diary.ui.screens.calendar.CalendarScreen
 import com.compass.diary.ui.screens.compass.CompassScreen
 import com.compass.diary.ui.screens.editor.DailyPageScreen
+import com.compass.diary.ui.screens.export.ExportScreen
 import com.compass.diary.ui.screens.home.DiaryHomeScreen
+import com.compass.diary.ui.screens.player.PlayerScreen
 import com.compass.diary.ui.screens.reminders.RemindersScreen
 import com.compass.diary.ui.screens.search.SearchScreen
 import com.compass.diary.ui.screens.settings.SettingsScreen
@@ -16,7 +18,6 @@ import com.compass.diary.ui.screens.splash.SplashScreen
 import com.compass.diary.ui.screens.starred.StarredScreen
 import com.compass.diary.ui.screens.unlock.UnlockSetupScreen
 import com.compass.diary.ui.screens.voice.VoiceScreen
-import com.compass.diary.ui.screens.export.ExportScreen
 
 object R {
     const val SPLASH    = "splash"
@@ -33,6 +34,7 @@ object R {
     const val SONGS      = "songs"
     const val VOICE      = "voice"
     const val EXPORT     = "export"
+    const val PLAYER     = "player"
     fun page(k: String) = "page/$k"
 }
 
@@ -59,7 +61,8 @@ fun CompassNavGraph(navController: NavHostController) {
                 onSearch    = { navController.navigate(R.SEARCH) },
                 onSettings  = { navController.navigate(R.SETTINGS) },
                 onSongs     = { navController.navigate(R.SONGS) },
-                onVoice     = { navController.navigate(R.VOICE) }
+                onVoice     = { navController.navigate(R.VOICE) },
+                onPlayer    = { navController.navigate(R.PLAYER) }
             )
         }
         composable(R.PAGE, arguments = listOf(navArgument("dateKey") { type = NavType.StringType })) { back ->
@@ -86,5 +89,6 @@ fun CompassNavGraph(navController: NavHostController) {
         composable(R.SONGS)     { SongsScreen(onBack = { navController.popBackStack() }) }
         composable(R.VOICE)     { VoiceScreen(onBack = { navController.popBackStack() }) }
         composable(R.EXPORT)    { ExportScreen(onBack = { navController.popBackStack() }) }
+        composable(R.PLAYER)    { PlayerScreen(onBack = { navController.popBackStack() }) }
     }
 }
