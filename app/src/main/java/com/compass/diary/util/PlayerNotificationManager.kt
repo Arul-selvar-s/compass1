@@ -41,10 +41,12 @@ class PlayerNotificationManager @Inject constructor(
     }
 
     private fun getOrCreateSession(): MediaSessionCompat {
-        return mediaSession ?: MediaSessionCompat(context, "CompassMediaSession").apply {
-            isActive = true
-            mediaSession = this
-        }
+        val existing = mediaSession
+        if (existing != null) return existing
+        val newSession = MediaSessionCompat(context, "CompassMediaSession")
+        newSession.isActive = true
+        mediaSession = newSession
+        return newSession
     }
 
     fun show(title: String, subtitle: String, isPlaying: Boolean) {
