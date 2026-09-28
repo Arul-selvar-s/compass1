@@ -1,8 +1,6 @@
 package com.compass.diary.ui.screens.editor
 
 import android.Manifest
-import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -60,21 +58,13 @@ import java.util.*
 private fun localDateOf(millis: Long): LocalDate =
     Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
 
-private fun openYoutube(context: Context, url: String) {
-    try {
-        val appIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { setPackage("com.google.android.youtube") }
-        context.startActivity(appIntent)
-    } catch (e: Exception) {
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DailyPageScreen(
     dateKey: String,
     onBack: () -> Unit,
     onAI: () -> Unit,
+    onPlaySong: (Long) -> Unit,
     viewModel: DiaryViewModel = hiltViewModel(),
     songViewModel: SongViewModel = hiltViewModel(),
     voiceViewModel: VoiceViewModel = hiltViewModel(),
@@ -258,7 +248,7 @@ fun DailyPageScreen(
                         if (songsToday.isNotEmpty()) {
                             Text("Songs from this day", style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            songsToday.forEach { s -> DaySongRow(s, timeFmt) { openYoutube(context, s.youtubeUrl) } }
+                            songsToday.forEach { s -> DaySongRow(s, timeFmt) { onPlaySong(s.id) } }
                         }
                         if (voiceToday.isNotEmpty()) {
                             Text("Voice messages from this day", style = MaterialTheme.typography.labelMedium,
@@ -447,6 +437,7 @@ private fun DaySongRow(song: SongMessageEntity, timeFmt: SimpleDateFormat, onOpe
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(if (song.sender == "JENMASANI") "Jenmasani" else "Kutty Golu", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                if (!song.title.isNullOrBlank()) Text(song.title, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                 if (!song.note.isNullOrBlank()) Text(song.note, style = MaterialTheme.typography.bodySmall)
             }
             Text(timeFmt.format(Date(song.sentAt)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
