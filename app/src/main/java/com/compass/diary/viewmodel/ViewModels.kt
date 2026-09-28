@@ -145,6 +145,10 @@ class DiaryViewModel @Inject constructor(
     val allDateKeys: StateFlow<List<String>> = repo.getAllDateKeys()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /** For a "Synced X ago" line on Home. */
+    val lastSyncAt: StateFlow<Long?> = prefs.lastSyncAt
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     private val _selectedKey = MutableStateFlow<String?>(null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -245,6 +249,13 @@ class DiaryViewModel @Inject constructor(
         }
     }
 
+    fun reactToNote(id: Long, reaction: String?) {
+        viewModelScope.launch {
+            repo.setNoteReaction(id, reaction)
+            scheduleSync()
+        }
+    }
+
     fun moodForDate(dateKey: String) = repo.getMoodForDate(dateKey)
 
     fun saveMood(dateKey: String, missedPercent: Int, lovedPercent: Int, onResult: (Boolean) -> Unit) {
@@ -311,11 +322,10 @@ class SettingsViewModel @Inject constructor(
     val googleAccount: StateFlow<String?>    = prefs.googleAccount.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
     val biometricEnabled: StateFlow<Boolean> = prefs.isBiometricEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
     val anthropicApiKey: StateFlow<String?>  = prefs.anthropicApiKey.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    val lastSyncAt: StateFlow<Long?>         = prefs.lastSyncAt.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     private val _syncStatus = MutableStateFlow("")
     val syncStatus: StateFlow<String> = _syncStatus
-    private val _lastSync = MutableStateFlow("Never")
-    val lastSyncLabel: StateFlow<String> = _lastSync
 
     fun setDarkMode(v: String) { viewModelScope.launch { prefs.setDarkMode(v) } }
     fun setNotifications(v: Boolean) { viewModelScope.launch { prefs.setNotificationsEnabled(v) } }
@@ -327,11 +337,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             _syncStatus.value = "Uploading to Drive…"
             driveSync.uploadAll().fold(
-                onSuccess = {
-                    _syncStatus.value = "Uploaded ✓"
-                    prefs.setLastSync(System.currentTimeMillis())
-                    _lastSync.value = SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()).format(Date())
-                },
+                onSuccess = { _syncStatus.value = "Uploaded ✓" },
                 onFailure = { _syncStatus.value = "Sync failed: ${it.message}" }
             )
         }
@@ -476,7 +482,7 @@ class AIViewModel @Inject constructor(
                 }.toString()
 
                 val req = Request.Builder()
-                    .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
+                    .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent")
                     .addHeader("x-goog-api-key", key)
                     .addHeader("content-type", "application/json")
                     .post(body.toRequestBody("application/json".toMediaType()))
