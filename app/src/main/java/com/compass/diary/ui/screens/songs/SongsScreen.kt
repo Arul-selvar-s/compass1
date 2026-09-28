@@ -27,7 +27,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.ui.theme.CompassColors
 import com.compass.diary.viewmodel.SongViewModel
-import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
@@ -75,6 +74,17 @@ private fun combineDateWithNow(dateMillisUtc: Long): Long {
     return selectedDate.atTime(now).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
 }
 
+/** The list holds one item per song PLUS one date label per new day, so the true last index
+ *  is not songs.size - 1. */
+private fun lastItemIndex(songs: List<SongMessageEntity>): Int {
+    var count = 0
+    songs.forEachIndexed { i, s ->
+        if (i == 0 || localDateOf(songs[i - 1].sentAt) != localDateOf(s.sentAt)) count++
+        count++
+    }
+    return count - 1
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SongsScreen(
@@ -85,7 +95,6 @@ fun SongsScreen(
     val songs by viewModel.songs.collectAsState()
     val masterOn by viewModel.masterControlEnabled.collectAsState()
     val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
     val timeFmt = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
 
     var urlInput by remember { mutableStateOf("") }
@@ -94,9 +103,19 @@ fun SongsScreen(
     var showDatePicker by remember { mutableStateOf(false) }
     var editingSong by remember { mutableStateOf<SongMessageEntity?>(null) }
     var deletingSong by remember { mutableStateOf<SongMessageEntity?>(null) }
+    var didInitialScroll by remember { mutableStateOf(false) }
 
+    // Open at the newest song; when a new song arrives, glide to it.
     LaunchedEffect(songs.size) {
-        if (songs.isNotEmpty()) scope.launch { listState.animateScrollToItem(songs.size - 1) }
+        if (songs.isNotEmpty()) {
+            val last = lastItemIndex(songs)
+            if (!didInitialScroll) {
+                listState.scrollToItem(last)
+                didInitialScroll = true
+            } else {
+                listState.animateScrollToItem(last)
+            }
+        }
     }
 
     fun effectiveSentAt(): Long = selectedDateMillis?.let { combineDateWithNow(it) } ?: System.currentTimeMillis()
