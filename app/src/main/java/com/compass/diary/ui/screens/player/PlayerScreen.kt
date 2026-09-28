@@ -1,6 +1,8 @@
 package com.compass.diary.ui.screens.player
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import android.view.ViewGroup
@@ -13,19 +15,25 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -160,12 +168,23 @@ private fun formatTime(ms: Long): String {
     return "%d:%02d".format(totalSec / 60, totalSec % 60)
 }
 
+private fun Context.findActivity(): Activity? {
+    var c: Context = this
+    while (c is ContextWrapper) {
+        if (c is Activity) return c
+        c = c.baseContext
+    }
+    return null
+}
+
 @Composable
 fun PlayerScreen(
     onBack: () -> Unit,
     viewModel: PlayerViewModel = hiltViewModel()
 ) {
     val category by viewModel.category.collectAsState()
+    val currentList by viewModel.currentList.collectAsState()
+    val currentIndex by viewModel.currentIndex.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val shuffleOn by viewModel.shuffleOn.collectAsState()
@@ -176,13 +195,20 @@ fun PlayerScreen(
     val positionMs by viewModel.positionMs.collectAsState()
     val durationMs by viewModel.durationMs.collectAsState()
     val loading by viewModel.loading.collectAsState()
+    val sleepRemaining by viewModel.sleepRemainingMs.collectAsState()
+    val sleepStatus by viewModel.sleepStatus.collectAsState()
+    val closeRequested by viewModel.closeRequested.collectAsState()
     val context = LocalContext.current
+    val view = LocalView.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val dateFmt = remember { SimpleDateFormat("d MMM yyyy, h:mm a", Locale.getDefault()) }
 
     var showFullscreen by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
     var showVideo by remember { mutableStateOf(false) }   // false = poster + audio only
+    var showQueue by remember { mutableStateOf(false) }
+    var showSleepDialog by remember { mutableStateOf(false) }
+    var keepScreenOn by rememberSaveable { mutableStateOf(false) }
     var dragValue by remember { mutableStateOf<Float?>(null) }
     val webView = remember { buildPlayerWebView(context, viewModel) }
 
@@ -201,6 +227,18 @@ fun PlayerScreen(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Keep the screen awake only while a song plays or the sleep timer is winding down.
+    val screenAwake = keepScreenOn && (isPlaying || sleepRemaining != null || sleepStatus != null)
+    DisposableEffect(screenAwake) {
+        view.keepScreenOn = screenAwake
+        onDispose { view.keepScreenOn = false }
+    }
+
+    // Sleep timer finished (paused, synced, refreshed) -> close the app.
+    LaunchedEffect(closeRequested) {
+        if (closeRequested) context.findActivity()?.finishAffinity()
     }
 
     // Reuse the SAME WebView instance in both places; detach from any old parent first.
@@ -334,6 +372,17 @@ fun PlayerScreen(
                 val song = currentSong!!
                 val sender = if (song.sender == "JENMASANI") "Jenmasani" else "Kutty Golu"
 
+                if (sleepStatus != null) {
+                    Surface(
+                        color = CompassColors.Blue600.copy(alpha = 0.2f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Text(sleepStatus ?: "", style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(12.dp))
+                    }
+                }
+
                 if (playerError != null) {
                     Surface(
                         color = CompassColors.Error.copy(alpha = 0.15f),
@@ -357,7 +406,7 @@ fun PlayerScreen(
                 }
 
                 Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.Top
                 ) {
                     Column(Modifier.weight(1f)) {
@@ -371,7 +420,7 @@ fun PlayerScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (!song.note.isNullOrBlank()) {
                             Spacer(Modifier.height(4.dp))
-                            Text(song.note, style = MaterialTheme.typography.bodyMedium)
+                            Text(song.note, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
                         }
                     }
                     Spacer(Modifier.width(8.dp))
@@ -409,7 +458,8 @@ fun PlayerScreen(
 
                 Spacer(Modifier.weight(1f))
 
-                Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+                // Main transport
+                Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { viewModel.toggleShuffle() }) {
                         Icon(Icons.Default.Shuffle, "Shuffle", tint = if (shuffleOn) CompassColors.Blue600 else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -431,15 +481,101 @@ fun PlayerScreen(
                         Icon(Icons.Default.RepeatOne, "Repeat one", tint = if (repeatOneOn) CompassColors.Blue600 else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
+
+                // Round extras: -10s, Queue, Sleep timer, Keep screen on, +10s
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.Top) {
+                    RoundAction(Icons.Default.Replay10, "-10s") { viewModel.skipBy(-10_000) }
+                    RoundAction(Icons.AutoMirrored.Filled.QueueMusic, "Queue") { showQueue = true }
+                    RoundAction(
+                        Icons.Default.Bedtime,
+                        sleepRemaining?.let { formatTime(it) } ?: "Sleep",
+                        active = sleepRemaining != null || sleepStatus != null
+                    ) { showSleepDialog = true }
+                    RoundAction(Icons.Default.LightMode, "Screen on", active = keepScreenOn) { keepScreenOn = !keepScreenOn }
+                    RoundAction(Icons.Default.Forward10, "+10s") { viewModel.skipBy(10_000) }
+                }
+
                 Text(
                     "Volume is controlled by your phone's media volume buttons",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     textAlign = TextAlign.Center
                 )
             }
         }
+    }
+
+    // ── Queue pop-up ────────────────────────────────────────────
+    if (showQueue) {
+        ModalBottomSheet(onDismissRequest = { showQueue = false }) {
+            Text(
+                "Queue · ${categoryLabel(category)} · ${currentList.size} songs",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+            )
+            val queueState = rememberLazyListState(
+                initialFirstVisibleItemIndex = (currentIndex - 1).coerceAtLeast(0)
+            )
+            LazyColumn(
+                state = queueState,
+                modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                itemsIndexed(currentList, key = { _, s -> s.id }) { index, s ->
+                    QueueRow(
+                        song = s,
+                        isCurrent = index == currentIndex,
+                        isPlaying = isPlaying,
+                        dateText = dateFmt.format(Date(s.sentAt))
+                    ) {
+                        viewModel.playAt(index)
+                        showQueue = false
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+
+    // ── Sleep timer dialog ──────────────────────────────────────
+    if (showSleepDialog) {
+        AlertDialog(
+            onDismissRequest = { showSleepDialog = false },
+            icon = { Icon(Icons.Default.Bedtime, null) },
+            title = { Text("Sleep timer") },
+            text = {
+                Column {
+                    Text(
+                        "When the timer ends: the song pauses, the app syncs and refreshes, then closes. " +
+                            "\"Screen on\" is switched on so the song keeps playing until then.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    listOf(15 to "15 minutes", 30 to "30 minutes", 60 to "1 hour").forEach { (min, label) ->
+                        TextButton(
+                            onClick = {
+                                viewModel.startSleepTimer(min)
+                                keepScreenOn = true
+                                showSleepDialog = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(label) }
+                    }
+                    if (sleepRemaining != null) {
+                        TextButton(
+                            onClick = { viewModel.cancelSleepTimer(); showSleepDialog = false },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Cancel timer", color = CompassColors.Error) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showSleepDialog = false }) { Text("Close") } }
+        )
     }
 }
 
@@ -447,6 +583,61 @@ private fun categoryLabel(cat: PlayerCategory) = when (cat) {
     PlayerCategory.ALL -> "All"
     PlayerCategory.JENMASANI -> "Jenmasani"
     PlayerCategory.KUTTY_GOLU -> "Kutty Golu"
+}
+
+@Composable
+private fun RoundAction(icon: ImageVector, label: String, active: Boolean = false, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        FilledTonalIconButton(
+            onClick = onClick,
+            modifier = Modifier.size(46.dp),
+            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                containerColor = if (active) CompassColors.Blue600 else MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = if (active) Color.White else MaterialTheme.colorScheme.onSurface
+            )
+        ) { Icon(icon, label, Modifier.size(22.dp)) }
+        Spacer(Modifier.height(2.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun QueueRow(
+    song: SongMessageEntity,
+    isCurrent: Boolean,
+    isPlaying: Boolean,
+    dateText: String,
+    onClick: () -> Unit
+) {
+    val sender = if (song.sender == "JENMASANI") "Jenmasani" else "Kutty Golu"
+    Surface(
+        color = if (isCurrent) CompassColors.Blue600.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }
+    ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                if (isCurrent) (if (isPlaying) Icons.Default.GraphicEq else Icons.Default.Pause) else Icons.Default.PlayCircle,
+                null, Modifier.size(24.dp),
+                tint = if (isCurrent) CompassColors.Blue400 else Color(0xFFFF0000)
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    song.title ?: "Untitled video",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1
+                )
+                Text(
+                    "$sender • $dateText" + if (!song.note.isNullOrBlank()) " • ${song.note}" else "",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
+        }
+    }
 }
 
 @Composable
