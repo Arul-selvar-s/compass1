@@ -18,6 +18,7 @@ interface YoutubePlayerController {
     fun loadAndPlay(videoId: String)
     fun play()
     fun pause()
+    fun seekTo(seconds: Float)
 }
 
 @HiltViewModel
@@ -53,6 +54,12 @@ class PlayerViewModel @Inject constructor(
 
     private val _playerError = MutableStateFlow<Int?>(null)
     val playerError: StateFlow<Int?> = _playerError
+
+    private val _positionMs = MutableStateFlow(0L)
+    val positionMs: StateFlow<Long> = _positionMs
+
+    private val _durationMs = MutableStateFlow(0L)
+    val durationMs: StateFlow<Long> = _durationMs
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery
@@ -147,6 +154,8 @@ class PlayerViewModel @Inject constructor(
         val list = _currentList.value
         if (index !in list.indices) return
         _playerError.value = null
+        _positionMs.value = 0L
+        _durationMs.value = 0L
         _currentIndex.value = index
         _isPlaying.value = true
         controller?.loadAndPlay(extractVideoId(list[index].youtubeUrl))
@@ -193,6 +202,17 @@ class PlayerViewModel @Inject constructor(
     fun onPlayerError(code: Int) {
         _playerError.value = code
         _isPlaying.value = false
+    }
+
+    fun onProgress(currentSec: Double, durationSec: Double) {
+        if (currentSec.isNaN() || durationSec.isNaN()) return
+        _positionMs.value = (currentSec * 1000).toLong().coerceAtLeast(0L)
+        _durationMs.value = (durationSec * 1000).toLong().coerceAtLeast(0L)
+    }
+
+    fun seekToMs(ms: Long) {
+        _positionMs.value = ms
+        controller?.seekTo(ms / 1000f)
     }
 
     fun onExternalPause() { _isPlaying.value = false }
