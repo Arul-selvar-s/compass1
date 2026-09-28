@@ -34,8 +34,10 @@ object R {
     const val SONGS      = "songs"
     const val VOICE      = "voice"
     const val EXPORT     = "export"
-    const val PLAYER     = "player"
+    const val PLAYER     = "player?songId={songId}"
     fun page(k: String) = "page/$k"
+    /** songId = -1 opens the Player where it was left; otherwise plays that song. */
+    fun player(songId: Long = -1L) = "player?songId=$songId"
 }
 
 @Composable
@@ -62,7 +64,7 @@ fun CompassNavGraph(navController: NavHostController) {
                 onSettings  = { navController.navigate(R.SETTINGS) },
                 onSongs     = { navController.navigate(R.SONGS) },
                 onVoice     = { navController.navigate(R.VOICE) },
-                onPlayer    = { navController.navigate(R.PLAYER) }
+                onPlayer    = { navController.navigate(R.player()) }
             )
         }
         composable(R.PAGE, arguments = listOf(navArgument("dateKey") { type = NavType.StringType })) { back ->
@@ -86,9 +88,17 @@ fun CompassNavGraph(navController: NavHostController) {
                 onExport    = { navController.navigate(R.EXPORT) }
             )
         }
-        composable(R.SONGS)     { SongsScreen(onBack = { navController.popBackStack() }) }
+        composable(R.SONGS) {
+            SongsScreen(
+                onBack = { navController.popBackStack() },
+                onPlaySong = { songId -> navController.navigate(R.player(songId)) }
+            )
+        }
         composable(R.VOICE)     { VoiceScreen(onBack = { navController.popBackStack() }) }
         composable(R.EXPORT)    { ExportScreen(onBack = { navController.popBackStack() }) }
-        composable(R.PLAYER)    { PlayerScreen(onBack = { navController.popBackStack() }) }
+        composable(
+            R.PLAYER,
+            arguments = listOf(navArgument("songId") { type = NavType.LongType; defaultValue = -1L })
+        ) { PlayerScreen(onBack = { navController.popBackStack() }) }
     }
 }
