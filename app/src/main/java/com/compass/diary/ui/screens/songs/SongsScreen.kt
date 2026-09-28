@@ -1,7 +1,5 @@
 package com.compass.diary.ui.screens.songs
 
-import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,7 +21,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -59,15 +56,6 @@ private fun extractVideoId(url: String): String = try {
     }
 } catch (e: Exception) { url }
 
-private fun openYoutube(context: Context, url: String) {
-    try {
-        val appIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { setPackage("com.google.android.youtube") }
-        context.startActivity(appIntent)
-    } catch (e: Exception) {
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-    }
-}
-
 private fun localDateOf(millis: Long): LocalDate =
     Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
 
@@ -91,11 +79,11 @@ private fun combineDateWithNow(dateMillisUtc: Long): Long {
 @Composable
 fun SongsScreen(
     onBack: () -> Unit,
+    onPlaySong: (Long) -> Unit,
     viewModel: SongViewModel = hiltViewModel()
 ) {
     val songs by viewModel.songs.collectAsState()
     val masterOn by viewModel.masterControlEnabled.collectAsState()
-    val context = LocalContext.current
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val timeFmt = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
@@ -213,7 +201,7 @@ fun SongsScreen(
                     item(key = song.id) {
                         SongBubble(
                             song, timeFmt, masterOn = masterOn,
-                            onOpen = { openYoutube(context, song.youtubeUrl) },
+                            onOpen = { onPlaySong(song.id) },
                             onEdit = { editingSong = song },
                             onDelete = { deletingSong = song }
                         )
@@ -328,8 +316,13 @@ private fun SongBubble(
                 Icon(Icons.Default.PlayCircle, null, Modifier.size(28.dp), tint = Color(0xFFFF0000))
                 Spacer(Modifier.width(8.dp))
                 Column {
-                    Text("YouTube video", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    Text("Tap to play  •  ${extractVideoId(song.youtubeUrl).take(16)}",
+                    Text(
+                        if (!song.title.isNullOrBlank()) song.title else "YouTube video",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 2
+                    )
+                    Text("Tap to play in Player  •  ${extractVideoId(song.youtubeUrl).take(16)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
