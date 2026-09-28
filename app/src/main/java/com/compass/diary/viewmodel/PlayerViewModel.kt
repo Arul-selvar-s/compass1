@@ -6,13 +6,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.data.repository.DiaryRepository
+import com.compass.diary.data.repository.DriveSync
 import com.compass.diary.util.PlayerState
 import com.compass.diary.util.PlayerStateStore
 import com.compass.diary.util.YoutubeMetadataFetcher
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 enum class PlayerCategory { ALL, JENMASANI, KUTTY_GOLU }
@@ -28,6 +31,7 @@ interface YoutubePlayerController {
 class PlayerViewModel @Inject constructor(
     private val repo: DiaryRepository,
     private val stateStore: PlayerStateStore,
+    private val driveSync: DriveSync,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -71,6 +75,59 @@ class PlayerViewModel @Inject constructor(
     private val _loading = MutableStateFlow(true)
     val loading: StateFlow<Boolean> = _loading
 
+    // ── Sleep timer ─────────────────────────────────────────────
+    private val _sleepRemainingMs = MutableStateFlow<Long?>(null)
+    val sleepRemainingMs: StateFlow<Long?> = _sleepRemainingMs
+
+    private val _sleepStatus = MutableStateFlow<String?>(null)
+    val sleepStatus: StateFlow<String?> = _sleepStatus
+
+    private val _closeRequested = MutableStateFlow(false)
+    val closeRequested: StateFlow<Boolean> = _closeRequested
+
+    private var sleepJob: Job? = null
+
+    fun startSleepTimer(minutes: Int) {
+        sleepJob?.cancel()
+        _sleepStatus.value = null
+        val endAt = System.currentTimeMillis() + minutes * 60_000L
+        _sleepRemainingMs.value = minutes * 60_000L
+        sleepJob = viewModelScope.launch {
+            while (true) {
+                val remaining = endAt - System.currentTimeMillis()
+                if (remaining <= 0) break
+                _sleepRemainingMs.value = remaining
+                delay(1000)
+            }
+            _sleepRemainingMs.value = null
+            finishSleep()
+        }
+    }
+
+    fun cancelSleepTimer() {
+        sleepJob?.cancel()
+        sleepJob = null
+        _sleepRemainingMs.value = null
+        _sleepStatus.value = null
+    }
+
+    /** Timer ended: pause -> save position -> upload + download -> ask the screen to close the app. */
+    private suspend fun finishSleep() {
+        controller?.pause()
+        _isPlaying.value = false
+        persistNow(upload = true)
+        _sleepStatus.value = "Sleep timer finished — syncing…"
+        withTimeoutOrNull(25_000) {
+            driveSync.uploadAll()
+            _sleepStatus.value = "Refreshing…"
+            driveSync.downloadAndRestore()
+        }
+        _sleepStatus.value = "Closing app…"
+        delay(1500)   // lets the small player-position upload finish
+        _closeRequested.value = true
+    }
+
+    // ── Search ──────────────────────────────────────────────────
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery
 
@@ -268,6 +325,14 @@ class PlayerViewModel @Inject constructor(
     fun seekToMs(ms: Long) {
         _positionMs.value = ms
         controller?.seekTo(ms / 1000f)
+    }
+
+    /** Jump forward/back by [deltaMs] (e.g. -10_000 / +10_000). */
+    fun skipBy(deltaMs: Long) {
+        val duration = _durationMs.value
+        var target = (_positionMs.value + deltaMs).coerceAtLeast(0L)
+        if (duration > 0) target = target.coerceAtMost((duration - 500).coerceAtLeast(0L))
+        seekToMs(target)
     }
 
     fun onExternalPause() {
