@@ -1,13 +1,16 @@
 package com.compass.diary.viewmodel
 
 import android.net.Uri
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.data.repository.DiaryRepository
-import com.compass.diary.util.PlayerNotificationManager
+import com.compass.diary.util.PlayerState
+import com.compass.diary.util.PlayerStateStore
 import com.compass.diary.util.YoutubeMetadataFetcher
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -15,7 +18,7 @@ import javax.inject.Inject
 enum class PlayerCategory { ALL, JENMASANI, KUTTY_GOLU }
 
 interface YoutubePlayerController {
-    fun loadAndPlay(videoId: String)
+    fun loadAndPlay(videoId: String, startSeconds: Float)
     fun play()
     fun pause()
     fun seekTo(seconds: Float)
@@ -24,8 +27,12 @@ interface YoutubePlayerController {
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
     private val repo: DiaryRepository,
-    private val notificationManager: PlayerNotificationManager
+    private val stateStore: PlayerStateStore,
+    savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+
+    /** Set when a song was tapped in the Songs screen; -1 = just open the Player. */
+    private val requestedSongId: Long = savedStateHandle.get<Long>("songId") ?: -1L
 
     private val allSongs: StateFlow<List<SongMessageEntity>> = repo.getAllSongs()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -61,6 +68,9 @@ class PlayerViewModel @Inject constructor(
     private val _durationMs = MutableStateFlow(0L)
     val durationMs: StateFlow<Long> = _durationMs
 
+    private val _loading = MutableStateFlow(true)
+    val loading: StateFlow<Boolean> = _loading
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery
 
@@ -84,24 +94,58 @@ class PlayerViewModel @Inject constructor(
 
     var controller: YoutubePlayerController? = null
 
+    private var resumeState: PlayerState? = null
+    private var initialResolved = false
+    private var pendingStartSec = 0f
+
     init {
         viewModelScope.launch {
+            // Where did we (or the other phone) leave off? Skipped if a specific song was tapped.
+            if (requestedSongId < 0) resumeState = stateStore.loadBest()
+            val songs = repo.getAllSongs().first()
+            _currentList.value = filteredSorted(_category.value, songs)
+            startInitial()
+        }
+        viewModelScope.launch {
             allSongs.collect { songs ->
-                refreshList(songs)
+                if (initialResolved) refreshList(songs)   // new songs join the queue right away
                 backfillMissingTitles(songs)
             }
         }
+        // Save position locally every 5s while playing; upload to Drive every 15s.
         viewModelScope.launch {
-            combine(currentSong, isPlaying) { song, playing -> song to playing }
-                .collect { (song, playing) ->
-                    if (song != null) {
-                        val sender = if (song.sender == "JENMASANI") "Jenmasani" else "Kutty Golu"
-                        notificationManager.show(if (playing) "Now playing" else "Paused", "Sent by $sender", playing)
-                    } else {
-                        notificationManager.cancel()
-                    }
+            var ticks = 0
+            while (true) {
+                delay(5000)
+                if (_isPlaying.value) {
+                    ticks++
+                    persistNow(upload = ticks % 3 == 0)
                 }
+            }
         }
+    }
+
+    private fun songKey(song: SongMessageEntity) = "${song.sentAt}|${song.youtubeUrl}"
+
+    private fun startInitial() {
+        val list = _currentList.value
+        if (list.isNotEmpty()) {
+            val requestedIdx = if (requestedSongId >= 0) list.indexOfFirst { it.id == requestedSongId } else -1
+            val resume = resumeState
+            val resumeIdx = if (resume != null) list.indexOfFirst { songKey(it) == resume.songKey } else -1
+            when {
+                requestedIdx >= 0 -> playAt(requestedIdx)
+                resume != null && resumeIdx >= 0 -> {
+                    val nearEnd = resume.durationMs > 0 && resume.positionMs > resume.durationMs - 5000
+                    val startMs = if (nearEnd) 0L else resume.positionMs
+                    playAt(resumeIdx, startMs / 1000f)
+                }
+                else -> playAt(list.size - 1)
+            }
+        }
+        resumeState = null
+        initialResolved = true
+        _loading.value = false
     }
 
     private val titleFetchAttempted = mutableSetOf<Long>()
@@ -132,7 +176,6 @@ class PlayerViewModel @Inject constructor(
             val newIdx = filtered.indexOfFirst { it.id == currentId }
             if (newIdx >= 0) _currentIndex.value = newIdx
         } else if (_currentIndex.value == -1 && filtered.isNotEmpty()) {
-            // Songs arrived after the screen opened — start on the most recent one.
             playAt(filtered.size - 1)
         }
     }
@@ -150,20 +193,32 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun playAt(index: Int) {
+    fun playAt(index: Int, startSec: Float = 0f) {
         val list = _currentList.value
         if (index !in list.indices) return
         _playerError.value = null
-        _positionMs.value = 0L
+        pendingStartSec = startSec
+        _positionMs.value = (startSec * 1000).toLong()
         _durationMs.value = 0L
         _currentIndex.value = index
         _isPlaying.value = true
-        controller?.loadAndPlay(extractVideoId(list[index].youtubeUrl))
+        controller?.loadAndPlay(extractVideoId(list[index].youtubeUrl), startSec)
+        persistNow(upload = true)
+    }
+
+    /** Called once the YouTube player inside the WebView is ready. */
+    fun onPlayerReady() {
+        val list = _currentList.value
+        val idx = _currentIndex.value
+        if (idx in list.indices) {
+            controller?.loadAndPlay(extractVideoId(list[idx].youtubeUrl), pendingStartSec)
+        }
     }
 
     fun togglePlayPause() {
         if (_isPlaying.value) {
             controller?.pause(); _isPlaying.value = false
+            persistNow(upload = true)
         } else {
             controller?.play(); _isPlaying.value = true
         }
@@ -205,7 +260,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun onProgress(currentSec: Double, durationSec: Double) {
-        if (currentSec.isNaN() || durationSec.isNaN()) return
+        if (currentSec.isNaN() || durationSec.isNaN() || durationSec <= 0.0) return
         _positionMs.value = (currentSec * 1000).toLong().coerceAtLeast(0L)
         _durationMs.value = (durationSec * 1000).toLong().coerceAtLeast(0L)
     }
@@ -215,18 +270,37 @@ class PlayerViewModel @Inject constructor(
         controller?.seekTo(ms / 1000f)
     }
 
-    fun onExternalPause() { _isPlaying.value = false }
+    fun onExternalPause() {
+        _isPlaying.value = false
+        persistNow(upload = true)
+    }
+
     fun onExternalPlay() { _isPlaying.value = true; _playerError.value = null }
 
     fun pauseForBackground() {
         controller?.pause()
         _isPlaying.value = false
+        persistNow(upload = true)
+    }
+
+    private fun persistNow(upload: Boolean) {
+        if (!initialResolved) return
+        val song = _currentList.value.getOrNull(_currentIndex.value) ?: return
+        stateStore.save(
+            PlayerState(
+                songKey = songKey(song),
+                positionMs = _positionMs.value,
+                durationMs = _durationMs.value,
+                updatedAt = System.currentTimeMillis()
+            ),
+            upload
+        )
     }
 
     override fun onCleared() {
-        super.onCleared()
+        persistNow(upload = true)
         controller = null
-        notificationManager.cancel()
+        super.onCleared()
     }
 
     private fun extractVideoId(url: String): String = try {
