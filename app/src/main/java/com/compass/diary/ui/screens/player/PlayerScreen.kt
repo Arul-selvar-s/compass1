@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
+import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -41,7 +43,9 @@ import com.compass.diary.viewmodel.YoutubePlayerController
 import kotlinx.coroutines.launch
 
 private const val PLAYER_HTML = """
-<!DOCTYPE html><html><head><style>
+<!DOCTYPE html><html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
 html,body{margin:0;padding:0;background:#000;overflow:hidden;}
 #player{position:absolute;top:0;left:0;width:100%;height:100%;}
 </style></head>
@@ -52,11 +56,12 @@ html,body{margin:0;padding:0;background:#000;overflow:hidden;}
 var player;
 function onYouTubeIframeAPIReady() {
   player = new YT.Player('player', {
-    height: '100%', width: '100%', videoId: '',
-    playerVars: { playsinline: 1, rel: 0, modestbranding: 1, autoplay: 1 },
+    height: '100%', width: '100%',
+    playerVars: { playsinline: 1, rel: 0, modestbranding: 1, autoplay: 1, origin: 'https://www.youtube.com' },
     events: {
       'onReady': function(e){ AndroidBridge.onReady(); },
-      'onStateChange': function(e){ AndroidBridge.onStateChange(e.data); }
+      'onStateChange': function(e){ AndroidBridge.onStateChange(e.data); },
+      'onError': function(e){ AndroidBridge.onError(e.data); }
     }
   });
 }
@@ -96,8 +101,21 @@ private fun buildPlayerWebView(context: Context, viewModel: PlayerViewModel): We
                     }
                 }
             }
+            @JavascriptInterface
+            fun onError(code: Int) {
+                post { viewModel.onPlayerError(code) }
+            }
         }, "AndroidBridge")
         loadDataWithBaseURL("https://www.youtube.com", PLAYER_HTML, "text/html", "utf-8", null)
+    }
+}
+
+private fun openInYoutube(context: Context, url: String) {
+    try {
+        val appIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { setPackage("com.google.android.youtube") }
+        context.startActivity(appIntent)
+    } catch (e: Exception) {
+        try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
     }
 }
 
@@ -114,6 +132,7 @@ fun PlayerScreen(
     val repeatOneOn by viewModel.repeatOneOn.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
+    val playerError by viewModel.playerError.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -122,7 +141,15 @@ fun PlayerScreen(
     var showSearch by remember { mutableStateOf(false) }
     val webView = remember { buildPlayerWebView(context, viewModel) }
 
-    LaunchedEffect(category) { if (currentList.isEmpty()) viewModel.selectCategory(category) }
+    LaunchedEffect(Unit) { if (currentList.isEmpty()) viewModel.selectCategory(category) }
+
+    DisposableEffect(webView) {
+        onDispose {
+            viewModel.controller = null
+            (webView.parent as? ViewGroup)?.removeView(webView)
+            webView.destroy()
+        }
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -157,9 +184,15 @@ fun PlayerScreen(
         }
     }
 
+    // Reuse the SAME WebView instance in both places; detach from any old parent first.
+    val webViewFactory: (Context) -> WebView = {
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        webView
+    }
+
     if (showFullscreen && currentSong != null) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
-            AndroidView(modifier = Modifier.fillMaxSize(), factory = { webView })
+            AndroidView(modifier = Modifier.fillMaxSize(), factory = webViewFactory)
             IconButton(onClick = { showFullscreen = false }, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
                 Icon(Icons.Default.FullscreenExit, "Exit fullscreen", tint = Color.White)
             }
@@ -230,7 +263,7 @@ fun PlayerScreen(
                 Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)
                     .clickable(enabled = currentSong != null) { showFullscreen = true }
             ) {
-                AndroidView(modifier = Modifier.fillMaxSize(), factory = { webView })
+                AndroidView(modifier = Modifier.fillMaxSize(), factory = webViewFactory)
                 if (currentSong != null) {
                     IconButton(onClick = { showFullscreen = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)) {
                         Icon(Icons.Default.Fullscreen, "Fullscreen", tint = Color.White)
@@ -245,6 +278,27 @@ fun PlayerScreen(
             } else {
                 val song = currentSong!!
                 val sender = if (song.sender == "JENMASANI") "Jenmasani" else "Kutty Golu"
+
+                if (playerError != null) {
+                    Surface(
+                        color = CompassColors.Error.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(
+                                "YouTube couldn't play this here (error ${playerError}).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = CompassColors.Error
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { openInYoutube(context, song.youtubeUrl) }) { Text("Open in YouTube") }
+                                OutlinedButton(onClick = { viewModel.next() }) { Text("Skip") }
+                            }
+                        }
+                    }
+                }
 
                 Column(Modifier.fillMaxWidth().padding(16.dp)) {
                     if (!song.title.isNullOrBlank()) {
