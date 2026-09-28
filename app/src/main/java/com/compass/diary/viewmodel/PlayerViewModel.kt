@@ -51,6 +51,9 @@ class PlayerViewModel @Inject constructor(
     private val _repeatOneOn = MutableStateFlow(false)
     val repeatOneOn: StateFlow<Boolean> = _repeatOneOn
 
+    private val _playerError = MutableStateFlow<Int?>(null)
+    val playerError: StateFlow<Int?> = _playerError
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery
 
@@ -67,7 +70,7 @@ class PlayerViewModel @Inject constructor(
     fun clearSearch() { _searchQuery.value = "" }
 
     fun playSearchResult(song: SongMessageEntity) {
-        val idx = _currentList.value.indexOf(song)
+        val idx = _currentList.value.indexOfFirst { it.id == song.id }
         if (idx >= 0) playAt(idx)
         clearSearch()
     }
@@ -94,8 +97,10 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    private val titleFetchAttempted = mutableSetOf<Long>()
+
     private fun backfillMissingTitles(songs: List<SongMessageEntity>) {
-        songs.filter { it.title.isNullOrBlank() }.forEach { song ->
+        songs.filter { it.title.isNullOrBlank() && titleFetchAttempted.add(it.id) }.forEach { song ->
             viewModelScope.launch {
                 val title = YoutubeMetadataFetcher.fetchTitle(song.youtubeUrl)
                 if (title != null) repo.setSongTitle(song.id, title)
@@ -119,6 +124,9 @@ class PlayerViewModel @Inject constructor(
         if (currentId != null) {
             val newIdx = filtered.indexOfFirst { it.id == currentId }
             if (newIdx >= 0) _currentIndex.value = newIdx
+        } else if (_currentIndex.value == -1 && filtered.isNotEmpty()) {
+            // Songs arrived after the screen opened — start on the most recent one.
+            playAt(filtered.size - 1)
         }
     }
 
@@ -138,6 +146,7 @@ class PlayerViewModel @Inject constructor(
     fun playAt(index: Int) {
         val list = _currentList.value
         if (index !in list.indices) return
+        _playerError.value = null
         _currentIndex.value = index
         _isPlaying.value = true
         controller?.loadAndPlay(extractVideoId(list[index].youtubeUrl))
@@ -181,8 +190,13 @@ class PlayerViewModel @Inject constructor(
         if (_repeatOneOn.value) playAt(_currentIndex.value) else next()
     }
 
+    fun onPlayerError(code: Int) {
+        _playerError.value = code
+        _isPlaying.value = false
+    }
+
     fun onExternalPause() { _isPlaying.value = false }
-    fun onExternalPlay() { _isPlaying.value = true }
+    fun onExternalPlay() { _isPlaying.value = true; _playerError.value = null }
 
     fun pauseForBackground() {
         controller?.pause()
@@ -191,6 +205,7 @@ class PlayerViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
+        controller = null
         notificationManager.cancel()
     }
 
