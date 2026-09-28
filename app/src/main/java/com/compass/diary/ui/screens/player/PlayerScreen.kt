@@ -1,9 +1,7 @@
 package com.compass.diary.ui.screens.player
 
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.net.Uri
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
@@ -32,19 +30,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.ui.theme.CompassColors
-import com.compass.diary.util.PlayerActionBus
-import com.compass.diary.util.PlayerNotificationManager
 import com.compass.diary.viewmodel.PlayerCategory
 import com.compass.diary.viewmodel.PlayerViewModel
 import com.compass.diary.viewmodel.YoutubePlayerController
-import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -73,7 +67,9 @@ function onYouTubeIframeAPIReady() {
     }
   });
 }
-function loadVideo(id) { if (player && player.loadVideoById) player.loadVideoById(id); }
+function loadVideo(id, start) {
+  if (player && player.loadVideoById) player.loadVideoById({videoId: id, startSeconds: start});
+}
 function playVideo() { if (player && player.playVideo) player.playVideo(); }
 function pauseVideo() { if (player && player.pauseVideo) player.pauseVideo(); }
 function seekToSec(s) { if (player && player.seekTo) player.seekTo(s, true); }
@@ -100,13 +96,14 @@ private fun buildPlayerWebView(context: Context, viewModel: PlayerViewModel): We
             fun onReady() {
                 post {
                     viewModel.controller = object : YoutubePlayerController {
-                        override fun loadAndPlay(videoId: String) { evaluateJavascript("loadVideo('$videoId');", null) }
+                        override fun loadAndPlay(videoId: String, startSeconds: Float) {
+                            evaluateJavascript("loadVideo('$videoId', $startSeconds);", null)
+                        }
                         override fun play() { evaluateJavascript("playVideo();", null) }
                         override fun pause() { evaluateJavascript("pauseVideo();", null) }
                         override fun seekTo(seconds: Float) { evaluateJavascript("seekToSec($seconds);", null) }
                     }
-                    val idx = viewModel.currentIndex.value
-                    if (idx >= 0) viewModel.playAt(idx)
+                    viewModel.onPlayerReady()
                 }
             }
             @JavascriptInterface
@@ -150,6 +147,14 @@ private fun videoIdOf(url: String): String = try {
     }
 } catch (e: Exception) { url }
 
+/** Link that opens YouTube at the point we're currently at. */
+private fun youtubeUrlAt(originalUrl: String, positionMs: Long): String {
+    val id = videoIdOf(originalUrl)
+    if (id == originalUrl) return originalUrl
+    val sec = (positionMs / 1000).coerceAtLeast(0)
+    return "https://www.youtube.com/watch?v=$id&t=${sec}s"
+}
+
 private fun formatTime(ms: Long): String {
     val totalSec = (ms / 1000).coerceAtLeast(0)
     return "%d:%02d".format(totalSec / 60, totalSec % 60)
@@ -161,7 +166,6 @@ fun PlayerScreen(
     viewModel: PlayerViewModel = hiltViewModel()
 ) {
     val category by viewModel.category.collectAsState()
-    val currentList by viewModel.currentList.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val shuffleOn by viewModel.shuffleOn.collectAsState()
@@ -171,9 +175,9 @@ fun PlayerScreen(
     val playerError by viewModel.playerError.collectAsState()
     val positionMs by viewModel.positionMs.collectAsState()
     val durationMs by viewModel.durationMs.collectAsState()
+    val loading by viewModel.loading.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val scope = rememberCoroutineScope()
     val dateFmt = remember { SimpleDateFormat("d MMM yyyy, h:mm a", Locale.getDefault()) }
 
     var showFullscreen by remember { mutableStateOf(false) }
@@ -181,8 +185,6 @@ fun PlayerScreen(
     var showVideo by remember { mutableStateOf(false) }   // false = poster + audio only
     var dragValue by remember { mutableStateOf<Float?>(null) }
     val webView = remember { buildPlayerWebView(context, viewModel) }
-
-    LaunchedEffect(Unit) { if (currentList.isEmpty()) viewModel.selectCategory(category) }
 
     DisposableEffect(webView) {
         onDispose {
@@ -192,37 +194,13 @@ fun PlayerScreen(
         }
     }
 
+    // Lock / switch app / close: pause and remember exactly where we were.
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) viewModel.pauseForBackground()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    DisposableEffect(Unit) {
-        val filter = IntentFilter().apply {
-            addAction(PlayerNotificationManager.ACTION_PLAY_PAUSE)
-            addAction(PlayerNotificationManager.ACTION_NEXT)
-            addAction(PlayerNotificationManager.ACTION_PREVIOUS)
-        }
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context?, intent: Intent?) {
-                scope.launch { intent?.action?.let { PlayerActionBus.emit(it) } }
-            }
-        }
-        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
-        onDispose { context.unregisterReceiver(receiver) }
-    }
-
-    LaunchedEffect(Unit) {
-        PlayerActionBus.actions.collect { action ->
-            when (action) {
-                PlayerNotificationManager.ACTION_PLAY_PAUSE -> viewModel.togglePlayPause()
-                PlayerNotificationManager.ACTION_NEXT -> viewModel.next()
-                PlayerNotificationManager.ACTION_PREVIOUS -> viewModel.previous()
-            }
-        }
     }
 
     // Reuse the SAME WebView instance in both places; detach from any old parent first.
@@ -347,7 +325,10 @@ fun PlayerScreen(
 
             if (currentSong == null) {
                 Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                    Text("No songs in this category yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (loading) "Loading your last song…" else "No songs in this category yet",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             } else {
                 val song = currentSong!!
@@ -375,18 +356,32 @@ fun PlayerScreen(
                     }
                 }
 
-                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-                    if (!song.title.isNullOrBlank()) {
-                        Text(song.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, maxLines = 2)
-                        Spacer(Modifier.height(2.dp))
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        if (!song.title.isNullOrBlank()) {
+                            Text(song.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, maxLines = 2)
+                            Spacer(Modifier.height(2.dp))
+                        }
+                        Text("Sent by $sender", style = MaterialTheme.typography.labelMedium,
+                            color = if (song.sender == "JENMASANI") CompassColors.Gold400 else CompassColors.Blue400)
+                        Text(dateFmt.format(Date(song.sentAt)), style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (!song.note.isNullOrBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(song.note, style = MaterialTheme.typography.bodyMedium)
+                        }
                     }
-                    Text("Sent by $sender", style = MaterialTheme.typography.labelMedium,
-                        color = if (song.sender == "JENMASANI") CompassColors.Gold400 else CompassColors.Blue400)
-                    Text(dateFmt.format(Date(song.sentAt)), style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (!song.note.isNullOrBlank()) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(song.note, style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedButton(
+                        onClick = { openInYoutube(context, youtubeUrlAt(song.youtubeUrl, positionMs)) },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.PlayCircle, null, Modifier.size(18.dp), tint = Color(0xFFFF0000))
+                        Spacer(Modifier.width(6.dp))
+                        Text("YouTube", style = MaterialTheme.typography.labelMedium)
                     }
                 }
 
