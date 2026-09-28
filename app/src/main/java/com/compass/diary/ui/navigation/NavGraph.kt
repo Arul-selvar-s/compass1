@@ -71,7 +71,8 @@ fun CompassNavGraph(navController: NavHostController) {
             DailyPageScreen(
                 dateKey = back.arguments?.getString("dateKey") ?: "",
                 onBack  = { navController.popBackStack() },
-                onAI    = { navController.navigate(R.AI) }
+                onAI    = { navController.navigate(R.AI) },
+                onPlaySong = { songId -> navController.navigate(R.player(songId)) }
             )
         }
         composable(R.CALENDAR)  { CalendarScreen(onPage = { navController.navigate(R.page(it)) }, onBack = { navController.popBackStack() }) }
