@@ -42,9 +42,10 @@ import com.compass.diary.viewmodel.PlayerViewModel
 import com.compass.diary.viewmodel.YoutubePlayerController
 import kotlinx.coroutines.launch
 
-private const val PLAYER_HTML = """
+private fun playerHtml(origin: String): String = """
 <!DOCTYPE html><html><head>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <style>
 html,body{margin:0;padding:0;background:#000;overflow:hidden;}
 #player{position:absolute;top:0;left:0;width:100%;height:100%;}
@@ -57,7 +58,7 @@ var player;
 function onYouTubeIframeAPIReady() {
   player = new YT.Player('player', {
     height: '100%', width: '100%',
-    playerVars: { playsinline: 1, rel: 0, modestbranding: 1, autoplay: 1, origin: 'https://www.youtube.com' },
+    playerVars: { playsinline: 1, rel: 0, modestbranding: 1, autoplay: 1, origin: '$origin' },
     events: {
       'onReady': function(e){ AndroidBridge.onReady(); },
       'onStateChange': function(e){ AndroidBridge.onStateChange(e.data); },
@@ -73,6 +74,8 @@ function pauseVideo() { if (player && player.pauseVideo) player.pauseVideo(); }
 """
 
 private fun buildPlayerWebView(context: Context, viewModel: PlayerViewModel): WebView {
+    // Identify as the app's own domain (YouTube checks the embed's origin/referrer).
+    val origin = "https://${context.packageName}"
     return WebView(context).apply {
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
@@ -106,7 +109,7 @@ private fun buildPlayerWebView(context: Context, viewModel: PlayerViewModel): We
                 post { viewModel.onPlayerError(code) }
             }
         }, "AndroidBridge")
-        loadDataWithBaseURL("https://www.youtube.com", PLAYER_HTML, "text/html", "utf-8", null)
+        loadDataWithBaseURL(origin, playerHtml(origin), "text/html", "utf-8", null)
     }
 }
 
@@ -287,7 +290,8 @@ fun PlayerScreen(
                     ) {
                         Column(Modifier.padding(12.dp)) {
                             Text(
-                                "YouTube couldn't play this here (error ${playerError}).",
+                                "YouTube couldn't play this here (error ${playerError}). " +
+                                    "If only some songs show this, the uploader has blocked embedding for that video.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = CompassColors.Error
                             )
