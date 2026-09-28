@@ -10,6 +10,8 @@ import com.compass.diary.data.local.entity.StarredItemEntity
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -41,6 +43,10 @@ class DriveSync @Inject constructor(
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
+    // One upload/download at a time, whoever asks (screens, WorkManager, the 10s poll).
+    // Without this, two overlapping downloads could both insert the same note.
+    private val syncLock = Mutex()
+
     private suspend fun token(): String = withContext(Dispatchers.IO) {
         val signedIn = GoogleSignIn.getLastSignedInAccount(context)
             ?: throw Exception("Not signed in to Google")
@@ -56,204 +62,208 @@ class DriveSync @Inject constructor(
     }
 
     suspend fun uploadAll(): Result<Unit> = withContext(Dispatchers.IO) {
-        try {
-            val tok = token()
+        syncLock.withLock {
+            try {
+                val tok = token()
 
-            val photosDir = File(context.filesDir, "photos")
-            repo.getAllPhotosForBackup().forEach { p ->
-                if (p.driveFileId == null) {
-                    val localFile = File(photosDir, p.fileName)
-                    if (localFile.exists()) {
-                        val uploadedId = uploadPhotoBytes(tok, localFile)
-                        if (uploadedId != null) repo.setPhotoDriveFileId(p.id, uploadedId)
+                val photosDir = File(context.filesDir, "photos")
+                repo.getAllPhotosForBackup().forEach { p ->
+                    if (p.driveFileId == null) {
+                        val localFile = File(photosDir, p.fileName)
+                        if (localFile.exists()) {
+                            val uploadedId = uploadPhotoBytes(tok, localFile)
+                            if (uploadedId != null) repo.setPhotoDriveFileId(p.id, uploadedId)
+                        }
                     }
                 }
+
+                val entries = repo.getAllForBackup()
+                val starred = repo.getAllStarredForBackup()
+                val songs   = repo.getAllSongsForBackup()
+                val notes   = repo.getAllNotesForBackup()
+                val photos  = repo.getAllPhotosForBackup()
+                val moods   = repo.getAllMoodForBackup()
+
+                val entryArr = JSONArray()
+                entries.forEach { e ->
+                    entryArr.put(JSONObject().apply {
+                        put("dateKey",     e.dateKey)
+                        put("title",       e.title)
+                        put("contentJson", e.contentJson)
+                        put("plainText",   e.plainText)
+                        put("wordCount",   e.wordCount)
+                        put("createdAt",   e.createdAt)
+                        put("updatedAt",   e.updatedAt)
+                        put("tags",        e.tags)
+                    })
+                }
+
+                val starredArr = JSONArray()
+                starred.forEach { s ->
+                    starredArr.put(JSONObject().apply {
+                        put("diaryDateKey", s.diaryDateKey)
+                        put("contentType",  s.contentType)
+                        put("contentJson",  s.contentJson)
+                        put("preview",      s.preview)
+                        put("starredAt",    s.starredAt)
+                    })
+                }
+
+                val songArr = JSONArray()
+                songs.forEach { s ->
+                    songArr.put(JSONObject().apply {
+                        put("youtubeUrl", s.youtubeUrl)
+                        put("note",       s.note ?: JSONObject.NULL)
+                        put("sender",     s.sender)
+                        put("sentAt",     s.sentAt)
+                        put("title",      s.title ?: JSONObject.NULL)
+                    })
+                }
+
+                val noteArr = JSONArray()
+                notes.forEach { n ->
+                    noteArr.put(JSONObject().apply {
+                        put("dateKey", n.dateKey)
+                        put("text",    n.text)
+                        put("sentAt",  n.sentAt)
+                    })
+                }
+
+                val photoArr = JSONArray()
+                photos.forEach { p ->
+                    photoArr.put(JSONObject().apply {
+                        put("dateKey",     p.dateKey)
+                        put("fileName",    p.fileName)
+                        put("takenAt",     p.takenAt)
+                        put("driveFileId", p.driveFileId ?: JSONObject.NULL)
+                    })
+                }
+
+                val moodArr = JSONArray()
+                moods.forEach { m ->
+                    moodArr.put(JSONObject().apply {
+                        put("dateKey",        m.dateKey)
+                        put("missedPercent",  m.missedPercent)
+                        put("lovedPercent",   m.lovedPercent)
+                        put("savedAt",        m.savedAt)
+                    })
+                }
+
+                val body = JSONObject().apply {
+                    put("entries", entryArr)
+                    put("starred", starredArr)
+                    put("songs",   songArr)
+                    put("notes",   noteArr)
+                    put("photos",  photoArr)
+                    put("moods",   moodArr)
+                }.toString()
+
+                val existingId = findFileId(tok, FILE_NAME)
+                if (existingId == null) createJsonFile(tok, FILE_NAME, body) else updateFile(tok, existingId, body)
+                Result.success(Unit)
+            } catch (e: Exception) {
+                Result.failure(e)
             }
-
-            val entries = repo.getAllForBackup()
-            val starred = repo.getAllStarredForBackup()
-            val songs   = repo.getAllSongsForBackup()
-            val notes   = repo.getAllNotesForBackup()
-            val photos  = repo.getAllPhotosForBackup()
-            val moods   = repo.getAllMoodForBackup()
-
-            val entryArr = JSONArray()
-            entries.forEach { e ->
-                entryArr.put(JSONObject().apply {
-                    put("dateKey",     e.dateKey)
-                    put("title",       e.title)
-                    put("contentJson", e.contentJson)
-                    put("plainText",   e.plainText)
-                    put("wordCount",   e.wordCount)
-                    put("createdAt",   e.createdAt)
-                    put("updatedAt",   e.updatedAt)
-                    put("tags",        e.tags)
-                })
-            }
-
-            val starredArr = JSONArray()
-            starred.forEach { s ->
-                starredArr.put(JSONObject().apply {
-                    put("diaryDateKey", s.diaryDateKey)
-                    put("contentType",  s.contentType)
-                    put("contentJson",  s.contentJson)
-                    put("preview",      s.preview)
-                    put("starredAt",    s.starredAt)
-                })
-            }
-
-            val songArr = JSONArray()
-            songs.forEach { s ->
-                songArr.put(JSONObject().apply {
-                    put("youtubeUrl", s.youtubeUrl)
-                    put("note",       s.note ?: JSONObject.NULL)
-                    put("sender",     s.sender)
-                    put("sentAt",     s.sentAt)
-                    put("title",      s.title ?: JSONObject.NULL)
-                })
-            }
-
-            val noteArr = JSONArray()
-            notes.forEach { n ->
-                noteArr.put(JSONObject().apply {
-                    put("dateKey", n.dateKey)
-                    put("text",    n.text)
-                    put("sentAt",  n.sentAt)
-                })
-            }
-
-            val photoArr = JSONArray()
-            photos.forEach { p ->
-                photoArr.put(JSONObject().apply {
-                    put("dateKey",     p.dateKey)
-                    put("fileName",    p.fileName)
-                    put("takenAt",     p.takenAt)
-                    put("driveFileId", p.driveFileId ?: JSONObject.NULL)
-                })
-            }
-
-            val moodArr = JSONArray()
-            moods.forEach { m ->
-                moodArr.put(JSONObject().apply {
-                    put("dateKey",        m.dateKey)
-                    put("missedPercent",  m.missedPercent)
-                    put("lovedPercent",   m.lovedPercent)
-                    put("savedAt",        m.savedAt)
-                })
-            }
-
-            val body = JSONObject().apply {
-                put("entries", entryArr)
-                put("starred", starredArr)
-                put("songs",   songArr)
-                put("notes",   noteArr)
-                put("photos",  photoArr)
-                put("moods",   moodArr)
-            }.toString()
-
-            val existingId = findFileId(tok, FILE_NAME)
-            if (existingId == null) createJsonFile(tok, FILE_NAME, body) else updateFile(tok, existingId, body)
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
         }
     }
 
     suspend fun downloadAndRestore(): Result<Int> = withContext(Dispatchers.IO) {
-        try {
-            val tok = token()
-            val id = findFileId(tok, FILE_NAME) ?: return@withContext Result.success(0)
-            val content = downloadFile(tok, id)
-            val json = JSONObject(content)
+        syncLock.withLock {
+            try {
+                val tok = token()
+                val id = findFileId(tok, FILE_NAME) ?: return@withContext Result.success(0)
+                val content = downloadFile(tok, id)
+                val json = JSONObject(content)
 
-            val entryArr = json.optJSONArray("entries") ?: JSONArray()
-            val entries = (0 until entryArr.length()).map { i ->
-                val o = entryArr.getJSONObject(i)
-                DiaryEntryEntity(
-                    dateKey     = o.getString("dateKey"),
-                    title       = o.getString("title"),
-                    contentJson = o.optString("contentJson", ""),
-                    plainText   = o.optString("plainText",   ""),
-                    wordCount   = o.optInt("wordCount", 0),
-                    createdAt   = o.optLong("createdAt", System.currentTimeMillis()),
-                    updatedAt   = o.optLong("updatedAt", System.currentTimeMillis()),
-                    tags        = o.optString("tags", "")
-                )
-            }
-            repo.mergeFromBackup(entries)
-
-            val starredArr = json.optJSONArray("starred") ?: JSONArray()
-            val starred = (0 until starredArr.length()).map { i ->
-                val o = starredArr.getJSONObject(i)
-                StarredItemEntity(
-                    diaryDateKey = o.getString("diaryDateKey"),
-                    contentType  = o.optString("contentType", "TEXT"),
-                    contentJson  = o.optString("contentJson", ""),
-                    preview      = o.optString("preview", ""),
-                    starredAt    = o.optLong("starredAt", System.currentTimeMillis())
-                )
-            }
-            repo.mergeStarredFromBackup(starred)
-
-            val songArr = json.optJSONArray("songs") ?: JSONArray()
-            val songs = (0 until songArr.length()).map { i ->
-                val o = songArr.getJSONObject(i)
-                SongMessageEntity(
-                    youtubeUrl = o.getString("youtubeUrl"),
-                    note       = if (o.isNull("note")) null else o.optString("note"),
-                    sender     = o.getString("sender"),
-                    sentAt     = o.optLong("sentAt", System.currentTimeMillis()),
-                    title      = if (o.isNull("title")) null else o.optString("title")
-                )
-            }
-            repo.mergeSongsFromBackup(songs)
-
-            val noteArr = json.optJSONArray("notes") ?: JSONArray()
-            val notes = (0 until noteArr.length()).map { i ->
-                val o = noteArr.getJSONObject(i)
-                NoteMessageEntity(
-                    dateKey = o.getString("dateKey"),
-                    text    = o.getString("text"),
-                    sentAt  = o.optLong("sentAt", System.currentTimeMillis())
-                )
-            }
-            repo.mergeNotesFromBackup(notes)
-
-            val photoArr = json.optJSONArray("photos") ?: JSONArray()
-            val photos = (0 until photoArr.length()).map { i ->
-                val o = photoArr.getJSONObject(i)
-                PhotoEntity(
-                    dateKey     = o.getString("dateKey"),
-                    fileName    = o.getString("fileName"),
-                    takenAt     = o.optLong("takenAt", System.currentTimeMillis()),
-                    driveFileId = if (o.isNull("driveFileId")) null else o.optString("driveFileId")
-                )
-            }
-            val needDownload = repo.mergePhotosFromBackup(photos)
-
-            val photosDir = File(context.filesDir, "photos").apply { mkdirs() }
-            needDownload.forEach { p ->
-                val localFile = File(photosDir, p.fileName)
-                if (!localFile.exists() && p.driveFileId != null) {
-                    try { downloadBinaryFile(tok, p.driveFileId, localFile) } catch (e: Exception) { /* retry next sync */ }
+                val entryArr = json.optJSONArray("entries") ?: JSONArray()
+                val entries = (0 until entryArr.length()).map { i ->
+                    val o = entryArr.getJSONObject(i)
+                    DiaryEntryEntity(
+                        dateKey     = o.getString("dateKey"),
+                        title       = o.getString("title"),
+                        contentJson = o.optString("contentJson", ""),
+                        plainText   = o.optString("plainText",   ""),
+                        wordCount   = o.optInt("wordCount", 0),
+                        createdAt   = o.optLong("createdAt", System.currentTimeMillis()),
+                        updatedAt   = o.optLong("updatedAt", System.currentTimeMillis()),
+                        tags        = o.optString("tags", "")
+                    )
                 }
-            }
+                repo.mergeFromBackup(entries)
 
-            val moodArr = json.optJSONArray("moods") ?: JSONArray()
-            val moods = (0 until moodArr.length()).map { i ->
-                val o = moodArr.getJSONObject(i)
-                MoodEntity(
-                    dateKey       = o.getString("dateKey"),
-                    missedPercent = o.optInt("missedPercent", 0),
-                    lovedPercent  = o.optInt("lovedPercent", 0),
-                    savedAt       = o.optLong("savedAt", System.currentTimeMillis())
-                )
-            }
-            repo.mergeMoodFromBackup(moods)
+                val starredArr = json.optJSONArray("starred") ?: JSONArray()
+                val starred = (0 until starredArr.length()).map { i ->
+                    val o = starredArr.getJSONObject(i)
+                    StarredItemEntity(
+                        diaryDateKey = o.getString("diaryDateKey"),
+                        contentType  = o.optString("contentType", "TEXT"),
+                        contentJson  = o.optString("contentJson", ""),
+                        preview      = o.optString("preview", ""),
+                        starredAt    = o.optLong("starredAt", System.currentTimeMillis())
+                    )
+                }
+                repo.mergeStarredFromBackup(starred)
 
-            Result.success(entries.size)
-        } catch (e: Exception) {
-            Result.failure(e)
+                val songArr = json.optJSONArray("songs") ?: JSONArray()
+                val songs = (0 until songArr.length()).map { i ->
+                    val o = songArr.getJSONObject(i)
+                    SongMessageEntity(
+                        youtubeUrl = o.getString("youtubeUrl"),
+                        note       = if (o.isNull("note")) null else o.optString("note"),
+                        sender     = o.getString("sender"),
+                        sentAt     = o.optLong("sentAt", System.currentTimeMillis()),
+                        title      = if (o.isNull("title")) null else o.optString("title")
+                    )
+                }
+                repo.mergeSongsFromBackup(songs)
+
+                val noteArr = json.optJSONArray("notes") ?: JSONArray()
+                val notes = (0 until noteArr.length()).map { i ->
+                    val o = noteArr.getJSONObject(i)
+                    NoteMessageEntity(
+                        dateKey = o.getString("dateKey"),
+                        text    = o.getString("text"),
+                        sentAt  = o.optLong("sentAt", System.currentTimeMillis())
+                    )
+                }
+                repo.mergeNotesFromBackup(notes)
+
+                val photoArr = json.optJSONArray("photos") ?: JSONArray()
+                val photos = (0 until photoArr.length()).map { i ->
+                    val o = photoArr.getJSONObject(i)
+                    PhotoEntity(
+                        dateKey     = o.getString("dateKey"),
+                        fileName    = o.getString("fileName"),
+                        takenAt     = o.optLong("takenAt", System.currentTimeMillis()),
+                        driveFileId = if (o.isNull("driveFileId")) null else o.optString("driveFileId")
+                    )
+                }
+                val needDownload = repo.mergePhotosFromBackup(photos)
+
+                val photosDir = File(context.filesDir, "photos").apply { mkdirs() }
+                needDownload.forEach { p ->
+                    val localFile = File(photosDir, p.fileName)
+                    if (!localFile.exists() && p.driveFileId != null) {
+                        try { downloadBinaryFile(tok, p.driveFileId, localFile) } catch (e: Exception) { /* retry next sync */ }
+                    }
+                }
+
+                val moodArr = json.optJSONArray("moods") ?: JSONArray()
+                val moods = (0 until moodArr.length()).map { i ->
+                    val o = moodArr.getJSONObject(i)
+                    MoodEntity(
+                        dateKey       = o.getString("dateKey"),
+                        missedPercent = o.optInt("missedPercent", 0),
+                        lovedPercent  = o.optInt("lovedPercent", 0),
+                        savedAt       = o.optLong("savedAt", System.currentTimeMillis())
+                    )
+                }
+                repo.mergeMoodFromBackup(moods)
+
+                Result.success(entries.size)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
         }
     }
 
