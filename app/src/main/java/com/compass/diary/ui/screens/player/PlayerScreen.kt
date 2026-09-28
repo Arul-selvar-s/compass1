@@ -11,6 +11,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,6 +24,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
@@ -33,6 +36,7 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import coil.compose.AsyncImage
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.ui.theme.CompassColors
 import com.compass.diary.util.PlayerActionBus
@@ -41,6 +45,9 @@ import com.compass.diary.viewmodel.PlayerCategory
 import com.compass.diary.viewmodel.PlayerViewModel
 import com.compass.diary.viewmodel.YoutubePlayerController
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private fun playerHtml(origin: String): String = """
 <!DOCTYPE html><html><head>
@@ -69,6 +76,12 @@ function onYouTubeIframeAPIReady() {
 function loadVideo(id) { if (player && player.loadVideoById) player.loadVideoById(id); }
 function playVideo() { if (player && player.playVideo) player.playVideo(); }
 function pauseVideo() { if (player && player.pauseVideo) player.pauseVideo(); }
+function seekToSec(s) { if (player && player.seekTo) player.seekTo(s, true); }
+setInterval(function() {
+  if (player && player.getCurrentTime && player.getDuration) {
+    AndroidBridge.onProgress(player.getCurrentTime(), player.getDuration());
+  }
+}, 500);
 </script>
 </body></html>
 """
@@ -77,6 +90,7 @@ private fun buildPlayerWebView(context: Context, viewModel: PlayerViewModel): We
     // Identify as the app's own domain (YouTube checks the embed's origin/referrer).
     val origin = "https://${context.packageName}"
     return WebView(context).apply {
+        setBackgroundColor(android.graphics.Color.BLACK)
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.mediaPlaybackRequiresUserGesture = false
@@ -89,6 +103,7 @@ private fun buildPlayerWebView(context: Context, viewModel: PlayerViewModel): We
                         override fun loadAndPlay(videoId: String) { evaluateJavascript("loadVideo('$videoId');", null) }
                         override fun play() { evaluateJavascript("playVideo();", null) }
                         override fun pause() { evaluateJavascript("pauseVideo();", null) }
+                        override fun seekTo(seconds: Float) { evaluateJavascript("seekToSec($seconds);", null) }
                     }
                     val idx = viewModel.currentIndex.value
                     if (idx >= 0) viewModel.playAt(idx)
@@ -108,6 +123,10 @@ private fun buildPlayerWebView(context: Context, viewModel: PlayerViewModel): We
             fun onError(code: Int) {
                 post { viewModel.onPlayerError(code) }
             }
+            @JavascriptInterface
+            fun onProgress(current: Double, duration: Double) {
+                viewModel.onProgress(current, duration)
+            }
         }, "AndroidBridge")
         loadDataWithBaseURL(origin, playerHtml(origin), "text/html", "utf-8", null)
     }
@@ -120,6 +139,20 @@ private fun openInYoutube(context: Context, url: String) {
     } catch (e: Exception) {
         try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
     }
+}
+
+private fun videoIdOf(url: String): String = try {
+    val uri = Uri.parse(url)
+    when {
+        uri.host?.contains("youtu.be") == true -> uri.lastPathSegment ?: url
+        uri.path?.contains("/shorts/") == true -> uri.lastPathSegment ?: url
+        else -> uri.getQueryParameter("v") ?: url
+    }
+} catch (e: Exception) { url }
+
+private fun formatTime(ms: Long): String {
+    val totalSec = (ms / 1000).coerceAtLeast(0)
+    return "%d:%02d".format(totalSec / 60, totalSec % 60)
 }
 
 @Composable
@@ -136,12 +169,17 @@ fun PlayerScreen(
     val searchQuery by viewModel.searchQuery.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
     val playerError by viewModel.playerError.collectAsState()
+    val positionMs by viewModel.positionMs.collectAsState()
+    val durationMs by viewModel.durationMs.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+    val dateFmt = remember { SimpleDateFormat("d MMM yyyy, h:mm a", Locale.getDefault()) }
 
     var showFullscreen by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
+    var showVideo by remember { mutableStateOf(false) }   // false = poster + audio only
+    var dragValue by remember { mutableStateOf<Float?>(null) }
     val webView = remember { buildPlayerWebView(context, viewModel) }
 
     LaunchedEffect(Unit) { if (currentList.isEmpty()) viewModel.selectCategory(category) }
@@ -262,14 +300,47 @@ fun PlayerScreen(
                 FilterChip(category == PlayerCategory.KUTTY_GOLU, { viewModel.selectCategory(PlayerCategory.KUTTY_GOLU) }, { Text("Kutty Golu") }, modifier = Modifier.weight(1f))
             }
 
-            Box(
-                Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)
-                    .clickable(enabled = currentSong != null) { showFullscreen = true }
-            ) {
+            // Player area: the WebView always sits at the bottom (so audio keeps playing);
+            // in poster mode an opaque thumbnail covers it.
+            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)) {
                 AndroidView(modifier = Modifier.fillMaxSize(), factory = webViewFactory)
-                if (currentSong != null) {
-                    IconButton(onClick = { showFullscreen = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)) {
-                        Icon(Icons.Default.Fullscreen, "Fullscreen", tint = Color.White)
+
+                val song0 = currentSong
+                if (!showVideo && song0 != null) {
+                    Box(
+                        Modifier.fillMaxSize().background(Color.Black)
+                            .pointerInput(Unit) { detectTapGestures { } }
+                    ) {
+                        AsyncImage(
+                            model = "https://img.youtube.com/vi/${videoIdOf(song0.youtubeUrl)}/hqdefault.jpg",
+                            contentDescription = "Song poster",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+
+                if (song0 != null) {
+                    Row(
+                        Modifier.align(Alignment.BottomStart).padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilledTonalButton(
+                            onClick = { showVideo = !showVideo },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                if (showVideo) Icons.Default.Image else Icons.Default.Videocam,
+                                null, Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (showVideo) "Poster" else "Video", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    if (showVideo) {
+                        IconButton(onClick = { showFullscreen = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)) {
+                            Icon(Icons.Default.Fullscreen, "Fullscreen", tint = Color.White)
+                        }
                     }
                 }
             }
@@ -304,16 +375,40 @@ fun PlayerScreen(
                     }
                 }
 
-                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
                     if (!song.title.isNullOrBlank()) {
                         Text(song.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, maxLines = 2)
                         Spacer(Modifier.height(2.dp))
                     }
                     Text("Sent by $sender", style = MaterialTheme.typography.labelMedium,
                         color = if (song.sender == "JENMASANI") CompassColors.Gold400 else CompassColors.Blue400)
+                    Text(dateFmt.format(Date(song.sentAt)), style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (!song.note.isNullOrBlank()) {
                         Spacer(Modifier.height(4.dp))
                         Text(song.note, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+
+                // Seek bar
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    val duration = durationMs.coerceAtLeast(1L).toFloat()
+                    val shown = (dragValue ?: positionMs.toFloat()).coerceIn(0f, duration)
+                    Slider(
+                        value = shown,
+                        onValueChange = { dragValue = it },
+                        onValueChangeFinished = {
+                            dragValue?.let { viewModel.seekToMs(it.toLong()) }
+                            dragValue = null
+                        },
+                        valueRange = 0f..duration,
+                        enabled = durationMs > 0
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(formatTime(shown.toLong()), style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(formatTime(durationMs), style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
