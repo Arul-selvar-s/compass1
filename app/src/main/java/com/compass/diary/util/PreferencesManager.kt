@@ -41,6 +41,7 @@ class PreferencesManager @Inject constructor(@ApplicationContext private val ctx
     val isNotificationsEnabled: Flow<Boolean> = ds.data.catch { emit(emptyPreferences()) }.map { it[KEY_NOTIFICATIONS] ?: false }
     val anthropicApiKey: Flow<String?>   = ds.data.catch { emit(emptyPreferences()) }.map { it[KEY_ANTHROPIC_KEY] }
     val isMasterControlEnabled: Flow<Boolean> = ds.data.catch { emit(emptyPreferences()) }.map { it[KEY_MASTER_CONTROL] ?: false }
+    val lastSyncAt: Flow<Long?>          = ds.data.catch { emit(emptyPreferences()) }.map { it[KEY_LAST_SYNC] }
 
     suspend fun setSetupComplete(v: Boolean) = ds.edit { it[KEY_SETUP_COMPLETE] = v }
     suspend fun setFirstLaunch(v: Boolean)   = ds.edit { it[KEY_FIRST_LAUNCH] = v }

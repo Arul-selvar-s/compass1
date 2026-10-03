@@ -8,5 +8,6 @@ data class NoteMessageEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val dateKey: String,
     val text: String,
-    val sentAt: Long = System.currentTimeMillis()
+    val sentAt: Long = System.currentTimeMillis(),
+    val reaction: String? = null
 )

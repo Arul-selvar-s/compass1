@@ -1,6 +1,8 @@
 package com.compass.diary.ui.screens.editor
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -19,6 +21,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AddReaction
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -55,8 +58,19 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.*
 
+private val QUICK_REACTIONS = listOf("❤️", "😂", "😮", "😢", "👍", "🔥")
+
 private fun localDateOf(millis: Long): LocalDate =
     Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
+
+private fun openYoutube(context: Context, url: String) {
+    try {
+        val appIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { setPackage("com.google.android.youtube") }
+        context.startActivity(appIntent)
+    } catch (e: Exception) {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,6 +109,7 @@ fun DailyPageScreen(
     var editingNote by remember { mutableStateOf<NoteMessageEntity?>(null) }
     var deletingNote by remember { mutableStateOf<NoteMessageEntity?>(null) }
     var deletingPhoto by remember { mutableStateOf(false) }
+    var reactingTo by remember { mutableStateOf<NoteMessageEntity?>(null) }
 
     var missedSlider by remember(dateKey) { mutableFloatStateOf(50f) }
     var lovedSlider by remember(dateKey) { mutableFloatStateOf(50f) }
@@ -275,7 +290,8 @@ fun DailyPageScreen(
                     masterOn = masterOn,
                     onStar = { viewModel.starNoteMessage(dateKey, msg.text) },
                     onEdit = { editingNote = msg },
-                    onDelete = { deletingNote = msg }
+                    onDelete = { deletingNote = msg },
+                    onReactTap = { reactingTo = msg }
                 )
             }
         }
@@ -384,6 +400,33 @@ fun DailyPageScreen(
             dismissButton = { TextButton(onClick = { deletingNote = null }) { Text("Cancel") } }
         )
     }
+
+    if (reactingTo != null) {
+        val note = reactingTo!!
+        AlertDialog(
+            onDismissRequest = { reactingTo = null },
+            title = { Text("React") },
+            text = {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    QUICK_REACTIONS.forEach { emoji ->
+                        val isCurrent = note.reaction == emoji
+                        Surface(
+                            color = if (isCurrent) CompassColors.Blue600.copy(alpha = 0.2f) else Color.Transparent,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.clickable {
+                                viewModel.reactToNote(note.id, if (isCurrent) null else emoji)
+                                reactingTo = null
+                            }
+                        ) {
+                            Text(emoji, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(8.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { reactingTo = null }) { Text("Close") } }
+        )
+    }
 }
 
 @Composable
@@ -393,7 +436,8 @@ private fun NoteBubble(
     masterOn: Boolean,
     onStar: () -> Unit,
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onReactTap: () -> Unit
 ) {
     var starred by remember(msg.id) { mutableStateOf(false) }
     Column(
@@ -404,6 +448,17 @@ private fun NoteBubble(
     ) {
         SelectionContainer {
             Text(msg.text, style = MaterialTheme.typography.bodyLarge)
+        }
+        if (!msg.reaction.isNullOrBlank()) {
+            Spacer(Modifier.height(6.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.clickable { onReactTap() }
+            ) {
+                Text(msg.reaction, style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+            }
         }
         Spacer(Modifier.height(6.dp))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
@@ -419,6 +474,9 @@ private fun NoteBubble(
                         Icon(Icons.Default.Delete, "Delete", tint = CompassColors.Error, modifier = Modifier.size(14.dp))
                     }
                     Spacer(Modifier.width(4.dp))
+                }
+                IconButton(onClick = onReactTap, Modifier.size(24.dp)) {
+                    Icon(Icons.Default.AddReaction, "React", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
                 }
                 IconButton(onClick = { onStar(); starred = true }, Modifier.size(24.dp)) {
                     Icon(if (starred) Icons.Default.Star else Icons.Default.StarBorder, "Star",

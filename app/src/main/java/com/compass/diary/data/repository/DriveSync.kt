@@ -7,6 +7,7 @@ import com.compass.diary.data.local.entity.NoteMessageEntity
 import com.compass.diary.data.local.entity.PhotoEntity
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.data.local.entity.StarredItemEntity
+import com.compass.diary.util.PreferencesManager
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -27,7 +28,8 @@ import javax.inject.Singleton
 @Singleton
 class DriveSync @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val repo: DiaryRepository
+    private val repo: DiaryRepository,
+    private val prefs: PreferencesManager
 ) {
     companion object {
         private const val FILE_NAME   = "compass_diary_backup.json"
@@ -123,9 +125,10 @@ class DriveSync @Inject constructor(
                 val noteArr = JSONArray()
                 notes.forEach { n ->
                     noteArr.put(JSONObject().apply {
-                        put("dateKey", n.dateKey)
-                        put("text",    n.text)
-                        put("sentAt",  n.sentAt)
+                        put("dateKey",  n.dateKey)
+                        put("text",     n.text)
+                        put("sentAt",   n.sentAt)
+                        put("reaction", n.reaction ?: JSONObject.NULL)
                     })
                 }
 
@@ -160,6 +163,7 @@ class DriveSync @Inject constructor(
 
                 val existingId = findFileId(tok, FILE_NAME)
                 if (existingId == null) createJsonFile(tok, FILE_NAME, body) else updateFile(tok, existingId, body)
+                prefs.setLastSync(System.currentTimeMillis())
                 Result.success(Unit)
             } catch (e: Exception) {
                 Result.failure(e)
@@ -221,9 +225,10 @@ class DriveSync @Inject constructor(
                 val notes = (0 until noteArr.length()).map { i ->
                     val o = noteArr.getJSONObject(i)
                     NoteMessageEntity(
-                        dateKey = o.getString("dateKey"),
-                        text    = o.getString("text"),
-                        sentAt  = o.optLong("sentAt", System.currentTimeMillis())
+                        dateKey  = o.getString("dateKey"),
+                        text     = o.getString("text"),
+                        sentAt   = o.optLong("sentAt", System.currentTimeMillis()),
+                        reaction = if (o.isNull("reaction")) null else o.optString("reaction").ifBlank { null }
                     )
                 }
                 repo.mergeNotesFromBackup(notes)
@@ -260,6 +265,7 @@ class DriveSync @Inject constructor(
                 }
                 repo.mergeMoodFromBackup(moods)
 
+                prefs.setLastSync(System.currentTimeMillis())
                 Result.success(entries.size)
             } catch (e: Exception) {
                 Result.failure(e)

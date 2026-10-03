@@ -24,6 +24,21 @@ import com.compass.diary.ui.theme.CompassColors
 import com.compass.diary.viewmodel.SettingsViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+private fun timeAgoLabel(millis: Long?): String {
+    if (millis == null) return "Never"
+    val diff = (System.currentTimeMillis() - millis).coerceAtLeast(0)
+    return when {
+        diff < 60_000 -> "just now"
+        diff < 3_600_000 -> "${diff / 60_000}m ago"
+        diff < 86_400_000 -> "${diff / 3_600_000}h ago"
+        diff < 7 * 86_400_000 -> "${diff / 86_400_000}d ago"
+        else -> SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()).format(Date(millis))
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -40,7 +55,7 @@ fun SettingsScreen(
     val autoSync    by viewModel.autoSync.collectAsState()
     val account     by viewModel.googleAccount.collectAsState()
     val syncStatus  by viewModel.syncStatus.collectAsState()
-    val lastSync    by viewModel.lastSyncLabel.collectAsState()
+    val lastSyncAt  by viewModel.lastSyncAt.collectAsState()
     val apiKey      by viewModel.anthropicApiKey.collectAsState()
     var showApiDlg  by remember { mutableStateOf(false) }
     val updateInfo  by viewModel.updateInfo.collectAsState()
@@ -49,6 +64,10 @@ fun SettingsScreen(
     val masterOn    by viewModel.masterControlEnabled.collectAsState()
     val context     = LocalContext.current
     val scope       = rememberCoroutineScope()
+
+    var tick by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) { while (true) { delay(30_000); tick++ } }
+    val syncLabel = remember(lastSyncAt, tick) { timeAgoLabel(lastSyncAt) }
 
     var tapCount by remember { mutableStateOf(0) }
     var showPasswordDlg by remember { mutableStateOf(false) }
@@ -95,11 +114,13 @@ fun SettingsScreen(
                 Div()
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Sync, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Icon(Icons.Default.Sync, null, Modifier.size(22.dp),
+                        tint = if (lastSyncAt == null) CompassColors.Warning else MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.width(16.dp))
                     Column(Modifier.weight(1f)) {
                         Text("Auto-sync", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                        Text("Last: $lastSync", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Last synced: $syncLabel", style = MaterialTheme.typography.bodySmall,
+                            color = if (lastSyncAt == null) CompassColors.Warning else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(autoSync, viewModel::setAutoSync)
                 }

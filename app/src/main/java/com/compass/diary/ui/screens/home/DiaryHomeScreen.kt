@@ -20,8 +20,24 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.compass.diary.data.local.entity.DiaryEntryEntity
 import com.compass.diary.ui.theme.CompassColors
 import com.compass.diary.viewmodel.DiaryViewModel
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.util.Date
+import java.util.Locale
+
+private fun timeAgoLabel(millis: Long?): String {
+    if (millis == null) return "Never"
+    val diff = (System.currentTimeMillis() - millis).coerceAtLeast(0)
+    return when {
+        diff < 60_000 -> "just now"
+        diff < 3_600_000 -> "${diff / 60_000}m ago"
+        diff < 86_400_000 -> "${diff / 3_600_000}h ago"
+        diff < 7 * 86_400_000 -> "${diff / 86_400_000}d ago"
+        else -> SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(millis))
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,6 +55,11 @@ fun DiaryHomeScreen(
     val entries       by viewModel.allEntries.collectAsState()
     val todayKey      by viewModel.todayKey.collectAsState()
     val refreshStatus by viewModel.refreshStatus.collectAsState()
+    val lastSyncAt    by viewModel.lastSyncAt.collectAsState()
+
+    var tick by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) { while (true) { delay(30_000); tick++ } }
+    val syncLabel = remember(lastSyncAt, tick) { timeAgoLabel(lastSyncAt) }
 
     Scaffold(
         topBar = {
@@ -47,9 +68,14 @@ fun DiaryHomeScreen(
                     title = {
                         Column {
                             Text("Compass", fontWeight = FontWeight.Bold)
-                            Text(LocalDate.now().format(DateTimeFormatter.ofPattern("MMMM yyyy")),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(LocalDate.now().format(DateTimeFormatter.ofPattern("MMMM yyyy")),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("  •  Synced $syncLabel",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (lastSyncAt == null) CompassColors.Warning else MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     },
                     actions = {

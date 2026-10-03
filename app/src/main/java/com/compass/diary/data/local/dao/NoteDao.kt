@@ -26,6 +26,9 @@ interface NoteDao {
     @Query("UPDATE note_messages SET text = :text WHERE id = :id")
     suspend fun updateText(id: Long, text: String)
 
+    @Query("UPDATE note_messages SET reaction = :reaction WHERE id = :id")
+    suspend fun updateReaction(id: Long, reaction: String?)
+
     @Query("DELETE FROM note_messages WHERE id = :id")
     suspend fun deleteById(id: Long)
 }

@@ -46,6 +46,9 @@ class DiaryRepository @Inject constructor(
         resyncDaySummary(dateKey)
     }
 
+    /** Reactions are non-destructive — allowed any time, no Master Control needed. */
+    suspend fun setNoteReaction(id: Long, reaction: String?) = noteDao.updateReaction(id, reaction)
+
     // ── Master Control only — normal flow never calls these ──────
     suspend fun editNoteMessage(id: Long, dateKey: String, newText: String) {
         noteDao.updateText(id, newText.trim())
@@ -75,6 +78,10 @@ class DiaryRepository @Inject constructor(
             if (existing == null) {
                 noteDao.insertMessage(remote)
                 affectedDates += remote.dateKey
+            } else if (remote.reaction != null && existing.reaction != remote.reaction) {
+                // Pick up a reaction the other phone added, without clobbering
+                // a reaction that only exists locally.
+                noteDao.updateReaction(existing.id, remote.reaction)
             }
         }
         affectedDates.forEach { resyncDaySummary(it) }
