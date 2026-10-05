@@ -17,6 +17,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -409,6 +410,34 @@ class AIViewModel @Inject constructor(
 
     private val http = OkHttpClient()
 
+    companion object {
+        private const val PRIMARY_MODEL  = "gemini-3.8-flash"
+        private const val FALLBACK_MODEL = "gemini-3.5-flash-lite"
+    }
+
+    /** Calls one Gemini model. Returns the parsed JSON plus whether the HTTP call succeeded. */
+    private suspend fun callGemini(model: String, key: String, bodyJson: String): Pair<Boolean, JSONObject> {
+        val req = Request.Builder()
+            .url("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
+            .addHeader("x-goog-api-key", key)
+            .addHeader("content-type", "application/json")
+            .post(bodyJson.toRequestBody("application/json".toMediaType()))
+            .build()
+        val resp = withContext(Dispatchers.IO) { http.newCall(req).execute() }
+        val responseBody = resp.body?.string() ?: "{}"
+        return resp.isSuccessful to JSONObject(responseBody)
+    }
+
+    /** True for a transient "model is busy right now" response — worth retrying or switching model. */
+    private fun isOverloaded(ok: Boolean, json: JSONObject): Boolean {
+        if (ok) return false
+        val error = json.optJSONObject("error")
+        val code = error?.optInt("code", 0) ?: 0
+        val msg = error?.optString("message", "") ?: ""
+        return code == 503 || msg.contains("overloaded", ignoreCase = true) ||
+            msg.contains("high demand", ignoreCase = true)
+    }
+
     fun ask(question: String) {
         _messages.update { it + Message(role = "user", content = question) }
         _thinking.value = true
@@ -481,18 +510,23 @@ class AIViewModel @Inject constructor(
                     })
                 }.toString()
 
-                val req = Request.Builder()
-                    .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent")
-                    .addHeader("x-goog-api-key", key)
-                    .addHeader("content-type", "application/json")
-                    .post(body.toRequestBody("application/json".toMediaType()))
-                    .build()
+                // 1) Primary model.
+                var (ok, json) = callGemini(PRIMARY_MODEL, key, body)
 
-                val resp = withContext(Dispatchers.IO) { http.newCall(req).execute() }
-                val responseBody = resp.body?.string() ?: "{}"
-                val json = JSONObject(responseBody)
+                // 2) Same model overloaded -> wait a moment and try it once more.
+                if (isOverloaded(ok, json)) {
+                    delay(3000)
+                    val retry = callGemini(PRIMARY_MODEL, key, body)
+                    ok = retry.first; json = retry.second
+                }
 
-                if (!resp.isSuccessful) {
+                // 3) Still overloaded -> switch to a different, less busy model.
+                if (isOverloaded(ok, json)) {
+                    val fallback = callGemini(FALLBACK_MODEL, key, body)
+                    ok = fallback.first; json = fallback.second
+                }
+
+                if (!ok) {
                     val errMsg = json.optJSONObject("error")?.optString("message") ?: "Unknown error"
                     _messages.update { it + Message(role = "assistant", content = "Error: $errMsg") }
                     _thinking.value = false
