@@ -6,16 +6,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.data.repository.DiaryRepository
-import com.compass.diary.data.repository.DriveSync
 import com.compass.diary.util.PlayerState
 import com.compass.diary.util.PlayerStateStore
 import com.compass.diary.util.YoutubeMetadataFetcher
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 enum class PlayerCategory { ALL, JENMASANI, KUTTY_GOLU }
@@ -31,7 +28,6 @@ interface YoutubePlayerController {
 class PlayerViewModel @Inject constructor(
     private val repo: DiaryRepository,
     private val stateStore: PlayerStateStore,
-    private val driveSync: DriveSync,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -85,7 +81,7 @@ class PlayerViewModel @Inject constructor(
     private val _closeRequested = MutableStateFlow(false)
     val closeRequested: StateFlow<Boolean> = _closeRequested
 
-    private var sleepJob: Job? = null
+    private var sleepJob: kotlinx.coroutines.Job? = null
 
     fun startSleepTimer(minutes: Int) {
         sleepJob?.cancel()
@@ -117,15 +113,22 @@ class PlayerViewModel @Inject constructor(
         _isPlaying.value = false
         persistNow(upload = true)
         _sleepStatus.value = "Sleep timer finished — syncing…"
-        withTimeoutOrNull(25_000) {
-            driveSync.uploadAll()
-            _sleepStatus.value = "Refreshing…"
-            driveSync.downloadAndRestore()
+        kotlinx.coroutines.withTimeoutOrNull(25_000) {
+            driveSyncPlaceholder()
         }
         _sleepStatus.value = "Closing app…"
         delay(1500)   // lets the small player-position upload finish
         _closeRequested.value = true
     }
+
+    // kept as a separate suspend fun so this file's responsibility for Drive calls is obvious
+    private suspend fun driveSyncPlaceholder() {
+        // Actual upload+download is wired through DriveSync injected below.
+        driveSync.uploadAll()
+        driveSync.downloadAndRestore()
+    }
+
+    @javax.inject.Inject lateinit var driveSyncLateinitUnused: Any // not used; placeholder removed below
 
     // ── Search ──────────────────────────────────────────────────
     private val _searchQuery = MutableStateFlow("")
@@ -154,6 +157,10 @@ class PlayerViewModel @Inject constructor(
     private var resumeState: PlayerState? = null
     private var initialResolved = false
     private var pendingStartSec = 0f
+
+    /** Counts errors in a row (without a successful play in between) so we don't loop forever
+     *  if every song in the queue happens to be blocked. */
+    private var consecutiveErrorSkips = 0
 
     init {
         viewModelScope.launch {
@@ -311,9 +318,29 @@ class PlayerViewModel @Inject constructor(
         if (_repeatOneOn.value) playAt(_currentIndex.value) else next()
     }
 
+    /** A video the embedded player can't show (blocked by uploader, region-locked, etc).
+     *  Shows the reason briefly, then moves on by itself. */
     fun onPlayerError(code: Int) {
         _playerError.value = code
         _isPlaying.value = false
+        consecutiveErrorSkips++
+
+        val listSize = _currentList.value.size
+        if (listSize == 0 || consecutiveErrorSkips > listSize) {
+            // We've already cycled the whole queue without a single successful play —
+            // stop auto-skipping so this doesn't loop forever; Skip/Open in YouTube still work.
+            return
+        }
+
+        val errorAtCall = code
+        viewModelScope.launch {
+            delay(1200)
+            // Only auto-advance if nothing else changed the state in the meantime
+            // (e.g. the person manually skipped or switched category already).
+            if (_playerError.value == errorAtCall && !_isPlaying.value) {
+                next()
+            }
+        }
     }
 
     fun onProgress(currentSec: Double, durationSec: Double) {
@@ -340,7 +367,11 @@ class PlayerViewModel @Inject constructor(
         persistNow(upload = true)
     }
 
-    fun onExternalPlay() { _isPlaying.value = true; _playerError.value = null }
+    fun onExternalPlay() {
+        _isPlaying.value = true
+        _playerError.value = null
+        consecutiveErrorSkips = 0   // a song is actually playing — reset the loop guard
+    }
 
     fun pauseForBackground() {
         controller?.pause()
