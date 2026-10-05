@@ -63,7 +63,7 @@ import java.time.ZoneId
 import java.util.*
 
 /** Only 4 quick taps now — the 5th slot in the picker opens the keyboard for any emoji. */
-private val QUICK_REACTIONS = listOf("❤️", "😜", "🥹", "🥺")
+private val QUICK_REACTIONS = listOf("\u2764\uFE0F", "\uD83D\uDE02", "\uD83D\uDE2E", "\uD83D\uDE22")
 
 private fun localDateOf(millis: Long): LocalDate =
     Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
@@ -418,7 +418,6 @@ fun DailyPageScreen(
                 emojiFocusRequester.requestFocus()
             }
         }
-        // Apply the instant any character comes in from the keyboard's emoji panel.
         LaunchedEffect(emojiInput) {
             if (emojiInput.isNotBlank()) {
                 viewModel.reactToNote(note.id, emojiInput)
@@ -438,7 +437,7 @@ fun DailyPageScreen(
                         OutlinedTextField(
                             value = emojiInput,
                             onValueChange = { emojiInput = it },
-                            placeholder = { Text("Open emoji panel on your keyboard…") },
+                            placeholder = { Text("Open your keyboard's emoji panel") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth().focusRequester(emojiFocusRequester)
                         )
@@ -487,4 +486,96 @@ fun DailyPageScreen(
                 }
             },
             confirmButton = {},
-            dismissButton = { TextButton(onClick = { reactingTo = null }) { Text("Close") }
+            dismissButton = { TextButton(onClick = { reactingTo = null }) { Text("Close") } }
+        )
+    }
+}
+
+@Composable
+private fun NoteBubble(
+    msg: NoteMessageEntity,
+    timeFmt: SimpleDateFormat,
+    masterOn: Boolean,
+    onStar: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onReactTap: () -> Unit
+) {
+    var starred by remember(msg.id) { mutableStateOf(false) }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(14.dp))
+            .padding(12.dp)
+    ) {
+        SelectionContainer {
+            Text(msg.text, style = MaterialTheme.typography.bodyLarge)
+        }
+        if (!msg.reaction.isNullOrBlank()) {
+            Spacer(Modifier.height(6.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.clickable { onReactTap() }
+            ) {
+                Text(msg.reaction, style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Text(timeFmt.format(Date(msg.sentAt)), style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+            Row {
+                if (masterOn) {
+                    IconButton(onClick = onEdit, Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Edit, "Edit", tint = CompassColors.Blue400, modifier = Modifier.size(14.dp))
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    IconButton(onClick = onDelete, Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Delete, "Delete", tint = CompassColors.Error, modifier = Modifier.size(14.dp))
+                    }
+                    Spacer(Modifier.width(4.dp))
+                }
+                IconButton(onClick = onReactTap, Modifier.size(24.dp)) {
+                    Icon(Icons.Default.AddReaction, "React", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                }
+                IconButton(onClick = { onStar(); starred = true }, Modifier.size(24.dp)) {
+                    Icon(if (starred) Icons.Default.Star else Icons.Default.StarBorder, "Star",
+                        tint = if (starred) CompassColors.Star else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DaySongRow(song: SongMessageEntity, timeFmt: SimpleDateFormat, onOpen: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth().clickable { onOpen() }) {
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.PlayCircle, null, Modifier.size(22.dp), tint = Color(0xFFFF0000))
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(if (song.sender == "JENMASANI") "Jenmasani" else "Kutty Golu", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                if (!song.title.isNullOrBlank()) Text(song.title, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                if (!song.note.isNullOrBlank()) Text(song.note, style = MaterialTheme.typography.bodySmall)
+            }
+            Text(timeFmt.format(Date(song.sentAt)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun DayVoiceRow(msg: VoiceMessageEntity, isPlaying: Boolean, timeFmt: SimpleDateFormat, onToggle: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth().clickable { onToggle() }) {
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Mic, null, Modifier.size(20.dp), tint = CompassColors.Blue400)
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(if (isPlaying) "Playing…" else "Tap to play", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                if (!msg.note.isNullOrBlank()) Text(msg.note, style = MaterialTheme.typography.bodySmall)
+            }
+            Text(timeFmt.format(Date(msg.sentAt)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
