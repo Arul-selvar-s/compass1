@@ -44,6 +44,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.ui.theme.CompassColors
+import com.compass.diary.util.PlayerMediaSessionEffect
 import com.compass.diary.viewmodel.PlayerCategory
 import com.compass.diary.viewmodel.PlayerViewModel
 import com.compass.diary.viewmodel.YoutubePlayerController
@@ -211,6 +212,21 @@ fun PlayerScreen(
     var keepScreenOn by rememberSaveable { mutableStateOf(false) }
     var dragValue by remember { mutableStateOf<Float?>(null) }
     val webView = remember { buildPlayerWebView(context, viewModel) }
+
+    // Headphone / Bluetooth buttons: play-pause, next, previous.
+    PlayerMediaSessionEffect(
+        title = currentSong?.title?.takeIf { it.isNotBlank() } ?: "Song",
+        artist = currentSong?.let { if (it.sender == "JENMASANI") "Jenmasani" else "Kutty Golu" } ?: "",
+        hasSong = currentSong != null,
+        isPlaying = isPlaying,
+        positionMs = positionMs,
+        durationMs = durationMs,
+        onPlay = { if (!viewModel.isPlaying.value) viewModel.togglePlayPause() },
+        onPause = { if (viewModel.isPlaying.value) viewModel.togglePlayPause() },
+        onNext = { viewModel.next() },
+        onPrevious = { viewModel.previous() },
+        onSeekTo = { viewModel.seekToMs(it) }
+    )
 
     DisposableEffect(webView) {
         onDispose {
