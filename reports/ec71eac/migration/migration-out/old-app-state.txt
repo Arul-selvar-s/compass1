@@ -1,0 +1,8 @@
+--- run-as ls databases ---
+total 16
+drwxrwx--x 2 u0_a141 u0_a141 4096 2026-11-05 22:58 .
+drwx------ 7 u0_a141 u0_a141 4096 2026-11-05 22:58 ..
+--- pid ---
+1924
+--- focus ---
+  mCurrentFocus=Window{d98fba2 u0 com.compass.diary/com.compass.diary.MainActivity}
