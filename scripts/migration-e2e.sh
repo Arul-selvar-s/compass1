@@ -23,9 +23,22 @@ adb logcat -c
 # ---- 1) old app creates its v7 database ----
 adb install -r /tmp/old.apk || { fail "install old apk"; exit 1; }
 adb shell am start -n $PKG/.MainActivity >/dev/null
-sleep 15
+for i in $(seq 1 20); do
+  sleep 3
+  adb shell "run-as $PKG ls databases" 2>&1 | tr -d '\r' | grep -q "^compass_diary.db$" && break
+done
+{
+  echo "--- run-as ls databases ---";      adb shell "run-as $PKG ls -la databases" 2>&1
+  echo "--- pid ---";                      adb shell pidof $PKG
+  echo "--- focus ---";                    adb shell dumpsys window | grep -i "mCurrentFocus" | head -2
+} > "$OUT/old-app-state.txt" 2>&1
+adb logcat -d > "$OUT/old-logcat.txt"
 pull_db "$OUT/before"
-if [ ! -s "$OUT/before/compass_diary.db" ]; then fail "old app did not create its database"; exit 1; fi
+if [ ! -s "$OUT/before/compass_diary.db" ]; then
+  fail "old app did not create its database (see old-app-state.txt / old-logcat.txt)"
+  grep -n "FATAL EXCEPTION" -A6 "$OUT/old-logcat.txt" | head -20
+  exit 1
+fi
 V=$(python3 -c "import sqlite3,sys;print(sqlite3.connect('$OUT/before/compass_diary.db').execute('PRAGMA user_version').fetchone()[0])")
 [ "$V" = "7" ] && ok "old app database is version 7" || fail "old database version is $V, expected 7"
 
