@@ -1,0 +1,1 @@
+MIGRATION FAIL: old app did not create its database
