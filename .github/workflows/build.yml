@@ -8,6 +8,13 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+defaults:
+  run:
+    shell: bash   # = bash -eo pipefail, so `gradle ... | tee log` still fails the step
+
+permissions:
+  contents: write   # lets the build push its logs to the `ci-reports` branch
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,8 +33,11 @@ jobs:
           gradle-version: '8.7'
           cache-disabled: true
 
+      - name: Unit tests
+        run: gradle testDebugUnitTest --no-daemon --stacktrace 2>&1 | tee test.log
+
       - name: Build APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -35,3 +45,9 @@ jobs:
           name: Compass-App-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 90
+
+      - name: Publish build report
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/publish-report.sh build test.log build.log app/build/test-results/testDebugUnitTest

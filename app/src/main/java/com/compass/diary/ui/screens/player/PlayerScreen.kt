@@ -12,6 +12,9 @@ import android.webkit.WebView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -45,6 +48,10 @@ import coil.compose.AsyncImage
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.ui.theme.CompassColors
 import com.compass.diary.util.PlayerMediaSessionEffect
+import com.compass.diary.util.SongClassifier
+import com.compass.diary.util.SongTag
+import com.compass.diary.util.SongTagGroup
+import com.compass.diary.util.SongTags
 import com.compass.diary.viewmodel.PlayerCategory
 import com.compass.diary.viewmodel.PlayerViewModel
 import com.compass.diary.viewmodel.YoutubePlayerController
@@ -199,6 +206,12 @@ fun PlayerScreen(
     val sleepRemaining by viewModel.sleepRemainingMs.collectAsState()
     val sleepStatus by viewModel.sleepStatus.collectAsState()
     val closeRequested by viewModel.closeRequested.collectAsState()
+    val subFilter by viewModel.subFilter.collectAsState()
+    val tagCounts by viewModel.tagCounts.collectAsState()
+    val totalSongs by viewModel.totalSongs.collectAsState()
+    val unsortedCount by viewModel.unsortedCount.collectAsState()
+    val sortProgress by viewModel.sortProgress.collectAsState()
+    var editingTagsOf by remember { mutableStateOf<SongMessageEntity?>(null) }
     val context = LocalContext.current
     val view = LocalView.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -273,6 +286,17 @@ fun PlayerScreen(
         return
     }
 
+    editingTagsOf?.let { editing ->
+        EditTagsDialog(
+            song = editing,
+            onDismiss = { editingTagsOf = null },
+            onSave = { tags ->
+                viewModel.setSongTags(editing.id, tags)
+                editingTagsOf = null
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -330,6 +354,19 @@ fun PlayerScreen(
                 FilterChip(category == PlayerCategory.ALL, { viewModel.selectCategory(PlayerCategory.ALL) }, { Text("All") }, modifier = Modifier.weight(1f))
                 FilterChip(category == PlayerCategory.JENMASANI, { viewModel.selectCategory(PlayerCategory.JENMASANI) }, { Text("Jenmasani") }, modifier = Modifier.weight(1f))
                 FilterChip(category == PlayerCategory.KUTTY_GOLU, { viewModel.selectCategory(PlayerCategory.KUTTY_GOLU) }, { Text("Kutty Golu") }, modifier = Modifier.weight(1f))
+            }
+
+            // Sub-categories (mood + era) exist only under "All"; Jenmasani / Kutty Golu stay as they were.
+            if (category == PlayerCategory.ALL) {
+                SubCategoryBar(
+                    selected = subFilter,
+                    counts = tagCounts,
+                    totalSongs = totalSongs,
+                    unsortedCount = unsortedCount,
+                    progress = sortProgress,
+                    onSelect = { viewModel.selectSubFilter(it) },
+                    onRetry = { viewModel.retryUnsorted() }
+                )
             }
 
             // Player area: the WebView always sits at the bottom (so audio keeps playing);
@@ -430,6 +467,7 @@ fun PlayerScreen(
                             Text(song.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, maxLines = 2)
                             Spacer(Modifier.height(2.dp))
                         }
+                        SongTagsRow(song = song, onEdit = { editingTagsOf = song })
                         Text("Sent by $sender", style = MaterialTheme.typography.labelMedium,
                             color = if (song.sender == "JENMASANI") CompassColors.Gold400 else CompassColors.Blue400)
                         Text(dateFmt.format(Date(song.sentAt)), style = MaterialTheme.typography.labelSmall,
@@ -683,4 +721,190 @@ private fun SearchResultRow(song: SongMessageEntity, onClick: () -> Unit) {
             }
         }
     }
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// Sub-categories (mood + era): drop-down under "All", per-song tags, manual edit
+// ---------------------------------------------------------------------------------------------
+
+@Composable
+private fun SubCategoryBar(
+    selected: SongTag?,
+    counts: Map<SongTag, Int>,
+    totalSongs: Int,
+    unsortedCount: Int,
+    progress: SongClassifier.Progress,
+    onSelect: (SongTag?) -> Unit,
+    onRetry: () -> Unit
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 8.dp)) {
+        Box {
+            OutlinedButton(onClick = { menuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.FilterList, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (selected == null) "All songs ($totalSongs)" else "${selected.label} (${counts[selected] ?: 0})",
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(Icons.Default.ArrowDropDown, null)
+            }
+            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                DropdownMenuItem(
+                    text = { Text("All songs ($totalSongs)", fontWeight = if (selected == null) FontWeight.Bold else FontWeight.Normal) },
+                    onClick = { menuExpanded = false; onSelect(null) }
+                )
+                HorizontalDivider()
+                SubCategoryGroup("Mood", SongTags.moods, selected, counts) { menuExpanded = false; onSelect(it) }
+                HorizontalDivider()
+                SubCategoryGroup("Era", SongTags.eras, selected, counts) { menuExpanded = false; onSelect(it) }
+            }
+        }
+        when {
+            progress.needsKey -> Text(
+                progress.message ?: "Add your Gemini API key in Settings → AI Assistant to sort songs by type.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            progress.running -> Column(Modifier.padding(top = 6.dp)) {
+                Text(
+                    "Sorting songs by meaning… ${progress.done}/${progress.total}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                LinearProgressIndicator(
+                    progress = { if (progress.total == 0) 0f else progress.done.toFloat() / progress.total },
+                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
+                )
+                progress.message?.let {
+                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            progress.message != null -> Text(
+                progress.message,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            unsortedCount > 0 -> Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "$unsortedCount song(s) not sorted yet",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                TextButton(onClick = onRetry, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                    Text("Sort now", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubCategoryGroup(
+    title: String,
+    tags: List<SongTag>,
+    selected: SongTag?,
+    counts: Map<SongTag, Int>,
+    onPick: (SongTag) -> Unit
+) {
+    Text(
+        title.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+    )
+    tags.forEach { tag ->
+        val n = counts[tag] ?: 0
+        DropdownMenuItem(
+            text = {
+                Text(
+                    tag.label,
+                    fontWeight = if (tag == selected) FontWeight.Bold else FontWeight.Normal
+                )
+            },
+            leadingIcon = { if (tag == selected) Icon(Icons.Default.Check, null, Modifier.size(18.dp)) },
+            trailingIcon = { Text("$n", style = MaterialTheme.typography.labelMedium) },
+            enabled = n > 0,
+            onClick = { onPick(tag) }
+        )
+    }
+}
+
+@Composable
+private fun SongTagsRow(song: SongMessageEntity, onEdit: () -> Unit) {
+    val tags = SongTags.parse(song.categories)
+    Row(
+        Modifier.fillMaxWidth().clickable { onEdit() }.padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (tags.isEmpty()) {
+            Text(
+                if (song.categories == null) "Not sorted yet · tap to set" else "No category · tap to add",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+        } else {
+            Row(
+                Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                SongTag.values().filter { it in tags }.forEach { tag ->
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = if (tag.group == SongTagGroup.ERA) 0.28f else 0.15f)
+                    ) {
+                        Text(tag.label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+                    }
+                }
+            }
+        }
+        Icon(
+            Icons.Default.Edit,
+            "Edit categories",
+            Modifier.padding(start = 6.dp).size(14.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EditTagsDialog(song: SongMessageEntity, onDismiss: () -> Unit, onSave: (Set<SongTag>) -> Unit) {
+    var picked by remember(song.id) { mutableStateOf(SongTags.parse(song.categories)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Song categories") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text("Mood", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SongTags.moods.forEach { tag ->
+                        FilterChip(
+                            selected = tag in picked,
+                            onClick = { picked = if (tag in picked) picked - tag else picked + tag },
+                            label = { Text(tag.label) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text("Era", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SongTags.eras.forEach { tag ->
+                        FilterChip(
+                            selected = tag in picked,
+                            // one era per song: choosing another replaces it, choosing it again clears it
+                            onClick = { picked = if (tag in picked) picked - tag else (picked - SongTags.eras.toSet()) + tag },
+                            label = { Text(tag.label) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(picked) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }

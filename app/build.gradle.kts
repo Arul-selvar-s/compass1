@@ -72,4 +72,8 @@ dependencies {
     implementation("androidx.hilt:hilt-work:1.2.0")
     ksp("androidx.hilt:hilt-compiler:1.2.0")
     implementation("androidx.media:media:1.7.0")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")          // real org.json (the Android stub does nothing in unit tests)
+    testImplementation("org.xerial:sqlite-jdbc:3.46.1.0") // runs the database migration SQL for real
 }

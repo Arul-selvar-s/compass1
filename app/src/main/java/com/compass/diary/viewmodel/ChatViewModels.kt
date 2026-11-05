@@ -15,6 +15,7 @@ import com.compass.diary.data.repository.DriveSync
 import com.compass.diary.util.AudioCompressor
 import com.compass.diary.util.PreferencesManager
 import com.compass.diary.util.SyncScheduler
+import com.compass.diary.util.SongClassifier
 import com.compass.diary.util.YoutubeMetadataFetcher
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -28,6 +29,7 @@ class SongViewModel @Inject constructor(
     private val repo: DiaryRepository,
     private val driveSync: DriveSync,
     private val prefs: PreferencesManager,
+    private val classifier: SongClassifier,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -65,6 +67,7 @@ class SongViewModel @Inject constructor(
             scheduleSync()
             val title = YoutubeMetadataFetcher.fetchTitle(cleanUrl)
             if (title != null) repo.setSongTitle(id, title)
+            classifier.kick()   // sort the new song into mood + era by its meaning
         }
     }
 
@@ -76,6 +79,7 @@ class SongViewModel @Inject constructor(
             scheduleSync()
             val title = YoutubeMetadataFetcher.fetchTitle(cleanUrl)
             if (title != null) repo.setSongTitle(id, title)
+            classifier.kick()
         }
     }
 

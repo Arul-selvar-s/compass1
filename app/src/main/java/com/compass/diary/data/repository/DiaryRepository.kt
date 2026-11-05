@@ -60,7 +60,11 @@ class DiaryRepository @Inject constructor(
         resyncDaySummary(dateKey)
     }
 
-    suspend fun editSong(id: Long, url: String, note: String?) = songDao.update(id, url.trim(), note?.trim()?.takeIf { it.isNotBlank() })
+    suspend fun editSong(id: Long, url: String, note: String?) {
+        val cleanUrl = url.trim()
+        songDao.resetCategoriesIfUrlChanged(id, cleanUrl)   // must run before the URL is overwritten
+        songDao.update(id, cleanUrl, note?.trim()?.takeIf { it.isNotBlank() })
+    }
     suspend fun deleteSong(id: Long) = songDao.deleteById(id)
 
     suspend fun editVoiceNote(id: Long, note: String?) = voiceMessageDao.updateNote(id, note?.trim()?.takeIf { it.isNotBlank() })
@@ -134,11 +138,21 @@ class DiaryRepository @Inject constructor(
     suspend fun getAllSongsForBackup() = songDao.getAllSongsForBackup()
     suspend fun addSong(song: SongMessageEntity): Long = songDao.insertSong(song)
     suspend fun setSongTitle(id: Long, title: String) = songDao.updateTitle(id, title)
+    suspend fun getSongById(id: Long): SongMessageEntity? = songDao.getById(id)
+    suspend fun setSongCategories(id: Long, categories: String, at: Long = System.currentTimeMillis()) =
+        songDao.setCategories(id, categories, at)
+    suspend fun bumpSongCategoryTries(id: Long) = songDao.bumpCategoryTries(id)
+    suspend fun resetSongCategoryTries() = songDao.resetCategoryTries()
 
     suspend fun mergeSongsFromBackup(items: List<SongMessageEntity>) {
         items.forEach { remote ->
             val existing = songDao.findMatch(remote.youtubeUrl, remote.sender, remote.sentAt)
-            if (existing == null) songDao.insertSong(remote)
+            if (existing == null) {
+                songDao.insertSong(remote.copy(id = 0, categoryTries = 0))
+            } else if (remote.categories != null && remote.categoriesAt > existing.categoriesAt) {
+                // The other phone sorted (or re-tagged) this song more recently.
+                songDao.applyRemoteCategories(existing.id, remote.categories, remote.categoriesAt)
+            }
         }
     }
 

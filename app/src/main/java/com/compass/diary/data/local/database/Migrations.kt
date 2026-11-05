@@ -94,6 +94,19 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
     }
 }
 
+/** Kept as plain SQL so a unit test can run it against a real SQLite database. */
+val MIGRATION_7_8_SQL = listOf(
+    "ALTER TABLE song_messages ADD COLUMN categories TEXT",
+    "ALTER TABLE song_messages ADD COLUMN categoriesAt INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE song_messages ADD COLUMN categoryTries INTEGER NOT NULL DEFAULT 0"
+)
+
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        MIGRATION_7_8_SQL.forEach { db.execSQL(it) }
+    }
+}
+
 val MIGRATION_6_7 = object : Migration(6, 7) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE note_messages ADD COLUMN reaction TEXT")

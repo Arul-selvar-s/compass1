@@ -8,6 +8,9 @@ import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.data.repository.DiaryRepository
 import com.compass.diary.data.repository.DriveSync
 import com.compass.diary.util.PlayerState
+import com.compass.diary.util.SongClassifier
+import com.compass.diary.util.SongTag
+import com.compass.diary.util.SongTags
 import com.compass.diary.util.PlayerStateStore
 import com.compass.diary.util.YoutubeMetadataFetcher
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -32,6 +35,7 @@ class PlayerViewModel @Inject constructor(
     private val repo: DiaryRepository,
     private val stateStore: PlayerStateStore,
     private val driveSync: DriveSync,
+    private val classifier: SongClassifier,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -43,6 +47,28 @@ class PlayerViewModel @Inject constructor(
 
     private val _category = MutableStateFlow(PlayerCategory.ALL)
     val category: StateFlow<PlayerCategory> = _category
+
+    /** Sub-category chosen in the "All" drop-down; null = every song. Only applies while category == ALL. */
+    private val _subFilter = MutableStateFlow<SongTag?>(null)
+    val subFilter: StateFlow<SongTag?> = _subFilter
+
+    /** How many songs carry each tag (a song with several tags is counted under each). */
+    val tagCounts: StateFlow<Map<SongTag, Int>> = allSongs
+        .map { songs ->
+            val counts = HashMap<SongTag, Int>()
+            songs.forEach { s -> SongTags.parse(s.categories).forEach { t -> counts[t] = (counts[t] ?: 0) + 1 } }
+            counts as Map<SongTag, Int>
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    val totalSongs: StateFlow<Int> = allSongs.map { it.size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    /** Songs the AI has not sorted yet (new, in progress, or given up on). */
+    val unsortedCount: StateFlow<Int> = allSongs.map { songs -> songs.count { it.categories == null } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val sortProgress: StateFlow<SongClassifier.Progress> = classifier.progress
 
     private val _currentList = MutableStateFlow<List<SongMessageEntity>>(emptyList())
     val currentList: StateFlow<List<SongMessageEntity>> = _currentList
@@ -166,11 +192,13 @@ class PlayerViewModel @Inject constructor(
             val songs = repo.getAllSongs().first()
             _currentList.value = filteredSorted(_category.value, songs)
             startInitial()
+            classifier.kick()
         }
         viewModelScope.launch {
             allSongs.collect { songs ->
                 if (initialResolved) refreshList(songs)   // new songs join the queue right away
                 backfillMissingTitles(songs)
+                if (songs.any { it.categories == null }) classifier.kick()
             }
         }
         // Save position locally every 5s while playing; upload to Drive every 15s.
@@ -222,7 +250,10 @@ class PlayerViewModel @Inject constructor(
 
     private fun filteredSorted(cat: PlayerCategory, songs: List<SongMessageEntity>): List<SongMessageEntity> {
         val filtered = when (cat) {
-            PlayerCategory.ALL        -> songs
+            PlayerCategory.ALL        -> _subFilter.value.let { tag ->
+                // A song with several tags (e.g. love + 90s) is in the queue under each of them.
+                if (tag == null) songs else songs.filter { SongTags.has(it.categories, tag) }
+            }
             PlayerCategory.JENMASANI  -> songs.filter { it.sender == "JENMASANI" }
             PlayerCategory.KUTTY_GOLU -> songs.filter { it.sender == "KUTTY_GOLU" }
         }
@@ -251,6 +282,29 @@ class PlayerViewModel @Inject constructor(
         } else {
             _currentIndex.value = -1
             _isPlaying.value = false
+        }
+    }
+
+    /** Picks a sub-category in the "All" drop-down (null = All songs) and queues exactly those songs. */
+    fun selectSubFilter(tag: SongTag?) {
+        _subFilter.value = tag
+        if (_category.value == PlayerCategory.ALL) selectCategory(PlayerCategory.ALL)
+    }
+
+    /** Manual fix of a song's tags (the AI can be wrong); saved and synced like the AI's result. */
+    fun setSongTags(songId: Long, tags: Set<SongTag>) {
+        viewModelScope.launch {
+            repo.setSongCategories(songId, SongTags.serialize(tags))
+            delay(2000)
+            classifier.syncNow()
+        }
+    }
+
+    /** Gives songs the AI gave up on another go. */
+    fun retryUnsorted() {
+        viewModelScope.launch {
+            repo.resetSongCategoryTries()
+            classifier.kick()
         }
     }
 
