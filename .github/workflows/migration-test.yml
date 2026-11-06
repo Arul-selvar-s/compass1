@@ -38,19 +38,22 @@ jobs:
           gradle-version: '8.7'
           cache-disabled: true
 
-      - name: Build the OLD app (database v7)
+      - name: Build a genuine version-7 database (from the OLD app's own Room schema)
         run: |
           git checkout -q "$OLD_COMMIT"
-          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee old-build.log
-          cp app/build/outputs/apk/debug/app-debug.apk /tmp/old.apk
+          gradle kspDebugKotlin --no-daemon --stacktrace 2>&1 | tee old-build.log
+          IMPL=$(find app/build -name 'AppDatabase_Impl.*' | head -1)
+          echo "old Room schema: $IMPL"
+          cp "$IMPL" /tmp/AppDatabase_Impl.old
           git checkout -q "$GITHUB_SHA"
-          git clean -fdxq -e old-build.log -e scripts
-          rm -rf app/build
+          git clean -fdxq -e old-build.log
+          python3 scripts/make_v7_db.py /tmp/AppDatabase_Impl.old /tmp/v7.db | tee v7-db.log
 
-      - name: Build the NEW app (database v8)
+      - name: Build the NEW app + its test APK (database v8)
         run: |
-          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee new-build.log
+          gradle assembleDebug assembleDebugAndroidTest --no-daemon --stacktrace 2>&1 | tee new-build.log
           cp app/build/outputs/apk/debug/app-debug.apk /tmp/new.apk
+          cp app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk /tmp/new-test.apk
 
       - name: Enable KVM
         run: |
@@ -71,4 +74,4 @@ jobs:
         if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/publish-report.sh migration migration-out old-build.log new-build.log
+        run: bash scripts/publish-report.sh migration migration-out old-build.log new-build.log v7-db.log

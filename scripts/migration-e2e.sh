@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Installs the OLD app (database v7), puts a song in its database, upgrades to the NEW app
-# in place, and checks that Room migrated without crashing and the song survived.
+# Puts a genuine v7 database into the NEW app's private storage, then runs an instrumented test
+# inside the app that opens it with the production database code (migration + Room validation).
 set -uo pipefail
 PKG=com.compass.diary
 OUT=migration-out; mkdir -p "$OUT"
@@ -8,82 +8,40 @@ FAIL=0
 fail() { echo "MIGRATION FAIL: $*" | tee -a "$OUT/result.txt"; FAIL=1; }
 ok()   { echo "MIGRATION ok:   $*" | tee -a "$OUT/result.txt"; }
 
-pull_db() { # pull_db <dir>  - copies compass_diary.db (+wal/shm) out of the app's private storage
-  rm -rf "$1"; mkdir -p "$1"
-  for f in $(adb shell "run-as $PKG ls databases" | tr -d '\r'); do
-    case "$f" in compass_diary.db|compass_diary.db-wal|compass_diary.db-shm)
-      adb exec-out "run-as $PKG cat databases/$f" > "$1/$f" ;;
-    esac
-  done
-}
-
 adb wait-for-device
 adb logcat -c
+adb install -r /tmp/new.apk      || { fail "install app"; exit 1; }
+adb install -r /tmp/new-test.apk || { fail "install test apk"; exit 1; }
 
-# ---- 1) old app creates its v7 database ----
-adb install -r /tmp/old.apk || { fail "install old apk"; exit 1; }
-adb shell am start -n $PKG/.MainActivity >/dev/null
-for i in $(seq 1 20); do
-  sleep 3
-  adb shell "run-as $PKG ls databases" 2>&1 | tr -d '\r' | grep -q "^compass_diary.db$" && break
-done
-{
-  echo "--- run-as ls databases ---";      adb shell "run-as $PKG ls -la databases" 2>&1
-  echo "--- pid ---";                      adb shell pidof $PKG
-  echo "--- focus ---";                    adb shell dumpsys window | grep -i "mCurrentFocus" | head -2
-} > "$OUT/old-app-state.txt" 2>&1
-adb logcat -d > "$OUT/old-logcat.txt"
-pull_db "$OUT/before"
-if [ ! -s "$OUT/before/compass_diary.db" ]; then
-  fail "old app did not create its database (see old-app-state.txt / old-logcat.txt)"
-  grep -n "FATAL EXCEPTION" -A6 "$OUT/old-logcat.txt" | head -20
-  exit 1
+adb shell am force-stop $PKG
+adb shell "run-as $PKG mkdir -p databases"
+adb shell "run-as $PKG rm -f databases/compass_diary.db databases/compass_diary.db-wal databases/compass_diary.db-shm"
+adb shell "run-as $PKG sh -c 'cat > databases/compass_diary.db'" < /tmp/v7.db
+adb shell "run-as $PKG ls -la databases" | tee "$OUT/seeded.txt"
+ok "version-7 database placed in the app's storage"
+
+adb shell am instrument -w -e class com.compass.diary.MigrationInstrumentedTest \
+  $PKG.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee "$OUT/instrument.txt"
+if grep -q "^OK (1 test)" "$OUT/instrument.txt"; then
+  ok "instrumented test passed: 7 -> 8 migration + Room validation + song kept"
+else
+  fail "instrumented test failed (see instrument.txt)"
 fi
-V=$(python3 -c "import sqlite3,sys;print(sqlite3.connect('$OUT/before/compass_diary.db').execute('PRAGMA user_version').fetchone()[0])")
-[ "$V" = "7" ] && ok "old app database is version 7" || fail "old database version is $V, expected 7"
 
-# ---- 2) add a song the way the old app would have stored it ----
-adb shell am force-stop $PKG
-sleep 2
-pull_db "$OUT/before"          # consolidated after the app stopped
-python3 scripts/db_check.py "$OUT/before/compass_diary.db" insert | tee "$OUT/before.json"
-rm -f "$OUT/before/compass_diary.db-wal" "$OUT/before/compass_diary.db-shm"
-adb shell "run-as $PKG rm -f databases/compass_diary.db-wal databases/compass_diary.db-shm"
-adb shell "run-as $PKG sh -c 'cat > databases/compass_diary.db'" < "$OUT/before/compass_diary.db"
-
-# ---- 3) upgrade in place and launch ----
-adb install -r /tmp/new.apk || { fail "upgrade install"; exit 1; }
-adb shell am start -n $PKG/.MainActivity >/dev/null
-sleep 15
-adb shell am force-stop $PKG
-sleep 2
-pull_db "$OUT/after"
-python3 scripts/db_check.py "$OUT/after/compass_diary.db" | tee "$OUT/after.json"
+adb exec-out "run-as $PKG cat databases/compass_diary.db" > "$OUT/after.db"
 adb logcat -d > "$OUT/logcat.txt"
-
+python3 scripts/db_check.py "$OUT/after.db" | tee "$OUT/after.json" >/dev/null
 python3 - "$OUT/after.json" <<'PYX' | tee -a "$OUT/result.txt"
 import json, sys
 d = json.load(open(sys.argv[1]))
 bad = []
 if d["user_version"] != 8: bad.append("database version is %s, expected 8" % d["user_version"])
-for col in ("categories", "categoriesAt", "categoryTries"):
-    if col not in d["song_columns"]: bad.append("missing column " + col)
-songs = [s for s in d["songs"] if s.get("note") == "keep me"]
-if len(songs) != 1: bad.append("the existing song did not survive the upgrade (%d rows)" % len(d["songs"]))
-else:
-    s = songs[0]
-    if s["title"] != "Old song" or s["sender"] != "JENMASANI": bad.append("song data changed: %s" % s)
-    if s["categories"] is not None: bad.append("categories should start empty")
-    if s["categoriesAt"] != 0 or s["categoryTries"] != 0: bad.append("new columns should default to 0")
-print("MIGRATION ok:   upgrade kept the song and added the tag columns" if not bad else "MIGRATION FAIL: " + "; ".join(bad))
+for c in ("categories", "categoriesAt", "categoryTries"):
+    if c not in d["song_columns"]: bad.append("missing column " + c)
+print("MIGRATION ok:   database file is now version 8 with the new columns" if not bad else "MIGRATION FAIL: " + "; ".join(bad))
 sys.exit(1 if bad else 0)
 PYX
 [ "${PIPESTATUS[0]}" = "0" ] || FAIL=1
 
-if grep -n "FATAL EXCEPTION\|Migration didn't properly handle\|IllegalStateException" "$OUT/logcat.txt" | head -5; then
-  fail "crash or Room schema error in logcat"
-else
-  ok "no crash / schema error after upgrade"
-fi
 echo "MIGRATION exit=$FAIL" | tee -a "$OUT/result.txt"
 exit $FAIL

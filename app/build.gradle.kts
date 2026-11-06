@@ -25,6 +25,7 @@ android {
         versionCode = 1
         versionName = "1.0"
         multiDexEnabled = true
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ksp { arg("room.schemaLocation", "$projectDir/schemas"); arg("room.incremental", "true") }
     }
     buildTypes {
@@ -72,6 +73,10 @@ dependencies {
     implementation("androidx.hilt:hilt-work:1.2.0")
     ksp("androidx.hilt:hilt-compiler:1.2.0")
     implementation("androidx.media:media:1.7.0")
+
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:core:1.6.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")          // real org.json (the Android stub does nothing in unit tests)
