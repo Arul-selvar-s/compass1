@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.compass.diary.util.SongClassificationTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-11-06T03:41:16" hostname="runnervm7aw5e" time="0.299">
+  <properties/>
+  <testcase name="unknownEraAndLowConfidenceAreNotConfident" classname="com.compass.diary.util.SongClassificationTest" time="0.045"/>
+  <testcase name="migrationKeepsExistingSongsAndAddsTagColumns" classname="com.compass.diary.util.SongClassificationTest" time="0.22"/>
+  <testcase name="storedTagsRoundTripInStableOrder" classname="com.compass.diary.util.SongClassificationTest" time="0.012"/>
+  <testcase name="extractsVideoIds" classname="com.compass.diary.util.SongClassificationTest" time="0.004"/>
+  <testcase name="aSongWithSeveralTagsIsFoundUnderEachOfThem" classname="com.compass.diary.util.SongClassificationTest" time="0.001"/>
+  <testcase name="toleratesCodeFencesAndGarbage" classname="com.compass.diary.util.SongClassificationTest" time="0.0"/>
+  <testcase name="readsGeminisRetryDelay" classname="com.compass.diary.util.SongClassificationTest" time="0.002"/>
+  <testcase name="promptAsksForMeaningAndListsEveryTag" classname="com.compass.diary.util.SongClassificationTest" time="0.007"/>
+  <testcase name="parsesAConfidentAnswer" classname="com.compass.diary.util.SongClassificationTest" time="0.001"/>
+  <testcase name="everyTagRoundTripsThroughItsId" classname="com.compass.diary.util.SongClassificationTest" time="0.001"/>
+  <testcase name="dropsInvalidTagsAndCapsMoodsAtThree" classname="com.compass.diary.util.SongClassificationTest" time="0.001"/>
+  <testcase name="tagTextIsMatchedLoosely" classname="com.compass.diary.util.SongClassificationTest" time="0.0"/>
+  <testcase name="schemaOffersExactlyTheKnownTags" classname="com.compass.diary.util.SongClassificationTest" time="0.003"/>
+  <testcase name="readsTheTextOutOfAGeminiEnvelope" classname="com.compass.diary.util.SongClassificationTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+]]></system-err>
+</testsuite>
