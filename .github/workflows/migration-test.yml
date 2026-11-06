@@ -47,7 +47,7 @@ jobs:
           cp "$IMPL" /tmp/AppDatabase_Impl.old
           git checkout -q "$GITHUB_SHA"
           git clean -fdxq -e old-build.log
-          python3 scripts/make_v7_db.py /tmp/AppDatabase_Impl.old /tmp/v7.db | tee v7-db.log
+          python3 scripts/make_v7_db.py /tmp/AppDatabase_Impl.old /tmp/v7.db 2>&1 | tee v7-db.log
 
       - name: Build the NEW app + its test APK (database v8)
         run: |
