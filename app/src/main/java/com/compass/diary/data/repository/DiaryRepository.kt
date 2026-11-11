@@ -139,8 +139,9 @@ class DiaryRepository @Inject constructor(
     suspend fun addSong(song: SongMessageEntity): Long = songDao.insertSong(song)
     suspend fun setSongTitle(id: Long, title: String) = songDao.updateTitle(id, title)
     suspend fun getSongById(id: Long): SongMessageEntity? = songDao.getById(id)
-    suspend fun setSongCategories(id: Long, categories: String, at: Long = System.currentTimeMillis()) =
-        songDao.setCategories(id, categories, at)
+    suspend fun setSongCategories(id: Long, categories: String, tier: Int, at: Long = System.currentTimeMillis()) =
+        songDao.setCategories(id, categories, at, tier)
+    suspend fun markSongForResort(id: Long) = songDao.markForResort(id)
     suspend fun bumpSongCategoryTries(id: Long) = songDao.bumpCategoryTries(id)
     suspend fun resetSongCategoryTries() = songDao.resetCategoryTries()
 
@@ -151,7 +152,7 @@ class DiaryRepository @Inject constructor(
                 songDao.insertSong(remote.copy(id = 0, categoryTries = 0))
             } else if (remote.categories != null && remote.categoriesAt > existing.categoriesAt) {
                 // The other phone sorted (or re-tagged) this song more recently.
-                songDao.applyRemoteCategories(existing.id, remote.categories, remote.categoriesAt)
+                songDao.applyRemoteCategories(existing.id, remote.categories, remote.categoriesAt, remote.categoryTier)
             }
         }
     }

@@ -121,6 +121,7 @@ class DriveSync @Inject constructor(
                         put("title",      s.title ?: JSONObject.NULL)
                         put("categories",   s.categories ?: JSONObject.NULL)
                         put("categoriesAt", s.categoriesAt)
+                        put("categoryTier", s.categoryTier)
                     })
                 }
 
@@ -220,7 +221,8 @@ class DriveSync @Inject constructor(
                         sentAt     = o.optLong("sentAt", System.currentTimeMillis()),
                         title      = if (o.isNull("title")) null else o.optString("title"),
                         categories   = if (o.isNull("categories")) null else o.optString("categories"),
-                        categoriesAt = o.optLong("categoriesAt", 0L)
+                        categoriesAt = o.optLong("categoriesAt", 0L),
+                        categoryTier = o.optInt("categoryTier", 0)
                     )
                 }
                 repo.mergeSongsFromBackup(songs)

@@ -23,7 +23,7 @@ ok "version-7 database placed in the app's storage"
 adb shell am instrument -w -e class com.compass.diary.MigrationInstrumentedTest \
   $PKG.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee "$OUT/instrument.txt"
 if grep -q "^OK (1 test)" "$OUT/instrument.txt"; then
-  ok "instrumented test passed: 7 -> 8 migration + Room validation + song kept"
+  ok "instrumented test passed: 7 -> 9 migration + Room validation + song kept"
 else
   fail "instrumented test failed (see instrument.txt)"
 fi
@@ -35,10 +35,10 @@ python3 - "$OUT/after.json" <<'PYX' | tee -a "$OUT/result.txt"
 import json, sys
 d = json.load(open(sys.argv[1]))
 bad = []
-if d["user_version"] != 8: bad.append("database version is %s, expected 8" % d["user_version"])
-for c in ("categories", "categoriesAt", "categoryTries"):
+if d["user_version"] != 9: bad.append("database version is %s, expected 9" % d["user_version"])
+for c in ("categories", "categoriesAt", "categoryTries", "categoryTier"):
     if c not in d["song_columns"]: bad.append("missing column " + c)
-print("MIGRATION ok:   database file is now version 8 with the new columns" if not bad else "MIGRATION FAIL: " + "; ".join(bad))
+print("MIGRATION ok:   database file is now version 9 with the new columns" if not bad else "MIGRATION FAIL: " + "; ".join(bad))
 sys.exit(1 if bad else 0)
 PYX
 [ "${PIPESTATUS[0]}" = "0" ] || FAIL=1

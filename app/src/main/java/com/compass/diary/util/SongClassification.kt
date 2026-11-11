@@ -1,7 +1,5 @@
 package com.compass.diary.util
 
-import org.json.JSONArray
-import org.json.JSONObject
 
 enum class SongTagGroup { MOOD, ERA }
 
@@ -13,8 +11,8 @@ enum class SongTag(val id: String, val label: String, val group: SongTagGroup, v
     MELODY("melody", "Melody", SongTagGroup.MOOD, "soft, soothing, tune-led songs you can relax to"),
     LOVE("love", "Love", SongTagGroup.MOOD, "romantic songs about being in love, longing, proposing, a couple's feelings"),
     SAD("sad", "Sad / Breakup", SongTagGroup.MOOD, "heartbreak, separation, pain, loss, loneliness"),
-    SPICY("spicy", "Spicy / Mass", SongTagGroup.MOOD, "sensual, steamy, flirty or glamorous songs, and high-voltage mass hero-style numbers"),
-    ITEM("item", "Item songs", SongTagGroup.MOOD, "special item-number / club-style dance numbers"),
+    SPICY("spicy", "Spicy / Mass", SongTagGroup.MOOD, "sensual, steamy, flirty or glamorous songs (bold or suggestive lyrics, seductive dance or visuals) AND high-voltage mass numbers (hero swagger, aggressive beats, punch-line style)"),
+    ITEM("item", "Item songs", SongTagGroup.MOOD, "item numbers: a special glamorous dance number, often a guest dancer, club or party style"),
     DANCE("dance", "Dance / Kuthu", SongTagGroup.MOOD, "upbeat dance, kuthu and folk-beat songs made to dance to"),
     HAPPY("happy", "Happy", SongTagGroup.MOOD, "joyful, feel-good, celebration songs"),
     MOTIVATIONAL("motivational", "Motivational", SongTagGroup.MOOD, "inspiring songs about confidence, struggle, rising up, life lessons"),
@@ -63,118 +61,42 @@ object SongTags {
     fun has(stored: String?, tag: SongTag): Boolean = tag in parse(stored)
 }
 
-/** What the model decided about one song. */
-data class SongClassification(
-    val identified: Boolean,
-    val confidence: Float,
-    val summary: String,
-    val moods: List<SongTag>,
-    val era: SongTag?
-) {
-    val tags: List<SongTag> get() = moods + listOfNotNull(era)
 
-    /** Sure enough that no second, deeper look (the video itself) is needed. */
-    val isConfident: Boolean get() = identified && confidence >= 0.6f && moods.isNotEmpty()
+/** Which sorting passes a song has been through (stored in the database and in the Drive backup). */
+object SongSortPolicy {
+    const val TIER_QUICK = 0     // not sorted yet, or sorted by the first quick pass
+    const val TIER_DEEP = 2      // deep multi-step analysis
+    const val TIER_MANUAL = 9    // edited by hand: never overwritten by the AI
+    const val MAX_TRIES = 3
+
+    fun needsSorting(tier: Int, tries: Int): Boolean = tier < TIER_DEEP && tries < MAX_TRIES
 }
 
-object SongPrompt {
-    private fun tagList(group: SongTagGroup) =
-        SongTag.values().filter { it.group == group }.joinToString("\n") { "- ${it.id}: ${it.meaning}" }
-
-    fun build(title: String?, channel: String?, note: String?, withVideo: Boolean): String = buildString {
-        appendLine("You are an expert in Indian film music and pop songs (Tamil, Telugu, Malayalam, Kannada, Hindi) as well as international songs.")
-        appendLine()
-        if (withVideo) {
-            appendLine("The attached YouTube video is a song. Listen to it: understand the lyrics, what the song is saying, its mood, tempo and style.")
-        }
-        if (!title.isNullOrBlank()) appendLine("YouTube title: \"$title\"")
-        if (!channel.isNullOrBlank()) appendLine("YouTube channel: \"$channel\"")
-        if (!note.isNullOrBlank()) appendLine("Note from the person who shared it: \"$note\"")
-        appendLine()
-        appendLine("Decide how to sort this song by its MEANING and sound - not by words that happen to appear in its title:")
-        appendLine("1. Work out which song this really is (film, singer, music director, release year) and recall what its lyrics are about.")
-        appendLine("2. If you do not genuinely know this song, say identified=false with a low confidence instead of guessing from the title.")
-        appendLine("3. moods: choose 1 to 3 tags that truly fit the song (ids only):")
-        appendLine(tagList(SongTagGroup.MOOD))
-        appendLine("4. era: choose exactly one, by the ORIGINAL release year of the song (not the year the video was uploaded), or \"unknown\":")
-        appendLine(tagList(SongTagGroup.ERA))
-        appendLine("5. summary: one short sentence saying what the song is about.")
-        appendLine()
-        append("Reply with JSON only: {\"identified\": true|false, \"confidence\": 0.0-1.0, \"summary\": \"...\", \"moods\": [ids], \"era\": \"id or unknown\"}")
-    }
-
-    /** Gemini structured-output schema (keeps answers machine-readable). */
-    fun schema(): JSONObject {
-        val moodIds = JSONArray().also { a -> SongTags.moods.forEach { a.put(it.id) } }
-        val eraIds = JSONArray().also { a -> SongTags.eras.forEach { a.put(it.id) }; a.put("unknown") }
-        return JSONObject()
-            .put("type", "OBJECT")
-            .put("properties", JSONObject()
-                .put("identified", JSONObject().put("type", "BOOLEAN"))
-                .put("confidence", JSONObject().put("type", "NUMBER"))
-                .put("summary", JSONObject().put("type", "STRING"))
-                .put("moods", JSONObject().put("type", "ARRAY")
-                    .put("items", JSONObject().put("type", "STRING").put("format", "enum").put("enum", moodIds)))
-                .put("era", JSONObject().put("type", "STRING").put("format", "enum").put("enum", eraIds)))
-            .put("required", JSONArray().put("identified").put("confidence").put("moods").put("era"))
+object Eras {
+    /** The era is always DERIVED from the verified release year, never guessed by a model. */
+    fun of(year: Int): SongTag = when {
+        year <= 1979 -> SongTag.CLASSIC
+        year <= 1989 -> SongTag.E80S
+        year <= 1999 -> SongTag.E90S
+        year <= 2009 -> SongTag.E2000S
+        year <= 2019 -> SongTag.E2010S
+        else -> SongTag.E2020S
     }
 }
 
-object SongClassificationParser {
-
-    /** The text the model produced -> a validated classification (unknown tags are dropped). */
-    fun parseModelText(text: String): SongClassification? {
-        val start = text.indexOf('{')
-        val end = text.lastIndexOf('}')
-        if (start < 0 || end <= start) return null
-        return try {
-            val o = JSONObject(text.substring(start, end + 1))
-            val moods = LinkedHashSet<SongTag>()
-            val arr = o.optJSONArray("moods") ?: JSONArray()
-            for (i in 0 until arr.length()) {
-                val tag = SongTags.fromText(arr.optString(i))
-                if (tag != null && tag.group == SongTagGroup.MOOD) moods.add(tag)
+object EtaFormat {
+    /** 25 min / about 2 h 10 min / under a minute. */
+    fun text(ms: Long?): String? {
+        if (ms == null || ms < 0) return null
+        val minutes = (ms + 30_000L) / 60_000L
+        return when {
+            ms < 60_000L -> "under a minute"
+            minutes < 60 -> "about $minutes min"
+            else -> {
+                val h = minutes / 60
+                val m = minutes % 60
+                if (m == 0L) "about $h h" else "about $h h $m min"
             }
-            val era = SongTags.fromText(o.optString("era", ""))?.takeIf { it.group == SongTagGroup.ERA }
-            SongClassification(
-                identified = o.optBoolean("identified", true),
-                confidence = o.optDouble("confidence", 0.5).toFloat().coerceIn(0f, 1f),
-                summary = o.optString("summary", ""),
-                moods = moods.take(3),
-                era = era
-            )
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    /** Whole generateContent HTTP response -> the model's text (null if blocked/empty). */
-    fun textOfResponse(body: String): String? = try {
-        val parts = JSONObject(body).optJSONArray("candidates")?.optJSONObject(0)
-            ?.optJSONObject("content")?.optJSONArray("parts")
-        if (parts == null) null else (0 until parts.length())
-            .mapNotNull { parts.optJSONObject(it)?.optString("text")?.takeIf { s -> s.isNotBlank() } }
-            .joinToString("")
-            .ifBlank { null }
-    } catch (e: Exception) {
-        null
-    }
-
-    fun parseApiResponse(body: String): SongClassification? = textOfResponse(body)?.let { parseModelText(it) }
-
-    /** "retryDelay":"23s" inside a 429 error -> 23000 (clamped to something sensible). */
-    fun retryDelayMs(errorBody: String): Long {
-        val fallback = 20_000L
-        return try {
-            val details = JSONObject(errorBody).optJSONObject("error")?.optJSONArray("details") ?: return fallback
-            for (i in 0 until details.length()) {
-                val d = details.optJSONObject(i)?.optString("retryDelay", "") ?: ""
-                val secs = d.removeSuffix("s").toDoubleOrNull()
-                if (secs != null) return (secs * 1000).toLong().coerceIn(10_000L, 90_000L)
-            }
-            fallback
-        } catch (e: Exception) {
-            fallback
         }
     }
 }

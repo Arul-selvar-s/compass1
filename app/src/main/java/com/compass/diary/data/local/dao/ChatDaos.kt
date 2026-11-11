@@ -34,23 +34,27 @@ interface SongDao {
     suspend fun getById(id: Long): SongMessageEntity?
 
     /** Saves a sorting result (AI or manual) and clears the failure counter. */
-    @Query("UPDATE song_messages SET categories = :categories, categoriesAt = :at, categoryTries = 0 WHERE id = :id")
-    suspend fun setCategories(id: Long, categories: String, at: Long)
+    @Query("UPDATE song_messages SET categories = :categories, categoriesAt = :at, categoryTier = :tier, categoryTries = 0 WHERE id = :id")
+    suspend fun setCategories(id: Long, categories: String, at: Long, tier: Int)
 
     @Query("UPDATE song_messages SET categoryTries = categoryTries + 1 WHERE id = :id")
     suspend fun bumpCategoryTries(id: Long)
 
-    /** "Retry unsorted songs": give every still-unsorted song a fresh set of attempts. */
-    @Query("UPDATE song_messages SET categoryTries = 0 WHERE categories IS NULL")
+    /** "Sort now": give every song that still needs the deep analysis a fresh set of attempts. */
+    @Query("UPDATE song_messages SET categoryTries = 0 WHERE categoryTier < 2")
     suspend fun resetCategoryTries()
 
+    /** Queue one song for a fresh deep analysis (keeps its current tags until the new result is in). */
+    @Query("UPDATE song_messages SET categoryTier = 0, categoryTries = 0 WHERE id = :id")
+    suspend fun markForResort(id: Long)
+
     /** A different video is a different song: forget the old sorting so it gets sorted again. */
-    @Query("UPDATE song_messages SET categories = NULL, categoriesAt = 0, categoryTries = 0 WHERE id = :id AND youtubeUrl != :url")
+    @Query("UPDATE song_messages SET categories = NULL, categoriesAt = 0, categoryTier = 0, categoryTries = 0 WHERE id = :id AND youtubeUrl != :url")
     suspend fun resetCategoriesIfUrlChanged(id: Long, url: String)
 
     /** Tags that arrived from the other phone / Drive (only called when they are newer). */
-    @Query("UPDATE song_messages SET categories = :categories, categoriesAt = :at, categoryTries = 0 WHERE id = :id")
-    suspend fun applyRemoteCategories(id: Long, categories: String, at: Long)
+    @Query("UPDATE song_messages SET categories = :categories, categoriesAt = :at, categoryTier = :tier, categoryTries = 0 WHERE id = :id")
+    suspend fun applyRemoteCategories(id: Long, categories: String, at: Long, tier: Int)
 }
 
 @Dao

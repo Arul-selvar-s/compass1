@@ -1,43 +1,45 @@
 package com.compass.diary.util
 
+import android.content.Context
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.data.repository.DiaryRepository
 import com.compass.diary.data.repository.DriveSync
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.IOException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Sorts every song into mood + era sub-categories with Gemini, judging by what the song MEANS
- * (lyrics, feeling, style, release year) rather than by words in its title.
+ * Sorts every song into mood + era by what it MEANS, using the careful multi-step [SongAnalyzer].
  *
- *  1. Ask Gemini about the song from its YouTube title + channel (+ your note).
- *  2. If it is not sure it knows the song, let Gemini actually watch/listen to the YouTube video.
- *  3. Save the tags on the song immediately, then push them to Drive.
- *
- * Runs in the background for the whole app, one song at a time at a gentle pace (free-tier friendly),
- * resumes where it stopped, and picks up new songs by itself.
+ * The work runs inside a WorkManager worker ([SongSortWorker]) with a foreground notification, so it
+ * keeps going when the app is closed (Android keeps the notification up while it works) and
+ * resumes by itself after a pause (no internet, Gemini's limit). Each finished song is saved at once
+ * and pushed to Drive in small batches.
  */
 @Singleton
 class SongClassifier @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val repo: DiaryRepository,
     private val prefs: PreferencesManager,
     private val driveSync: DriveSync
@@ -46,34 +48,43 @@ class SongClassifier @Inject constructor(
         val running: Boolean = false,
         val done: Int = 0,
         val total: Int = 0,
-        /** Why sorting stopped or is waiting (rate limit, offline, bad key...). */
+        /** Estimated time left for the whole queue; null until a few songs have been timed. */
+        val etaMs: Long? = null,
+        val currentTitle: String? = null,
+        /** Why sorting is waiting or stopped (rate limit, offline, bad key...). */
         val message: String? = null,
         val needsKey: Boolean = false
     )
 
+    enum class RunResult { FINISHED, RETRY_LATER, BLOCKED }
+    data class Summary(val result: RunResult, val sorted: Int, val total: Int)
+
     private val _progress = MutableStateFlow(Progress())
     val progress: StateFlow<Progress> = _progress.asStateFlow()
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val http = OkHttpClient.Builder()
-        .callTimeout(150, TimeUnit.SECONDS)
-        .readTimeout(150, TimeUnit.SECONDS)
+        .callTimeout(240, TimeUnit.SECONDS)
+        .readTimeout(240, TimeUnit.SECONDS)
         .build()
-
-    private val running = AtomicBoolean(false)
     private val kicked = AtomicBoolean(false)
 
-    /** Call whenever songs may need sorting (app start, song added/edited, player opened). Cheap if nothing to do. */
-    fun kick() {
+    /**
+     * Makes sure the background worker is queued. Cheap when there is nothing to do.
+     * [force] = "Sort now": also skips a waiting back-off timer (never interrupts a running worker).
+     */
+    fun kick(force: Boolean = false) {
         kicked.set(true)
-        if (!running.compareAndSet(false, true)) return   // the running loop will notice `kicked`
         scope.launch {
-            try {
-                runLoop()
-            } finally {
-                running.set(false)
-                if (kicked.get()) kick()
-            }
+            val wm = WorkManager.getInstance(context)
+            val running = wm.getWorkInfosForUniqueWorkFlow(WORK_NAME).first().any { it.state == WorkInfo.State.RUNNING }
+            if (running) return@launch   // the running loop re-checks `kicked` when it finishes
+            val request = OneTimeWorkRequestBuilder<SongSortWorker>()
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setBackoffCriteria(BackoffPolicy.LINEAR, 15, TimeUnit.MINUTES)
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .build()
+            wm.enqueueUniqueWork(WORK_NAME, if (force) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP, request)
         }
     }
 
@@ -86,226 +97,121 @@ class SongClassifier @Inject constructor(
 
     // ------------------------------------------------------------------------------------
 
-    private suspend fun runLoop() {
+    /** Called by the worker: sorts everything that still needs it. */
+    suspend fun runPending(onUpdate: suspend (Progress) -> Unit = {}): Summary {
+        var sorted = 0
+        var lastTotal = 0
+
+        suspend fun publish(p: Progress) {
+            _progress.value = p
+            onUpdate(p)
+        }
+
         do {
             kicked.set(false)
             val key = prefs.anthropicApiKey.first()   // the app's Gemini key lives under this (legacy) name
-            val pending = repo.getAllSongsForBackup()
-                .filter { it.categories == null && it.categoryTries < MAX_TRIES }
-                .sortedByDescending { it.sentAt }     // newest songs first
-            if (pending.isEmpty()) {
-                _progress.value = Progress()
+            val queue = repo.getAllSongsForBackup()
+                .filter { SongSortPolicy.needsSorting(it.categoryTier, it.categoryTries) }
+                // songs without any tags first (new ones), then older results that get re-checked; newest first
+                .sortedWith(compareBy<SongMessageEntity> { it.categories != null }.thenByDescending { it.sentAt })
+            lastTotal = queue.size
+            if (queue.isEmpty()) {
+                publish(Progress())
                 continue
             }
             if (key.isNullOrBlank()) {
-                _progress.value = Progress(total = pending.size, needsKey = true)
-                return
+                publish(Progress(total = queue.size, needsKey = true))
+                return Summary(RunResult.BLOCKED, sorted, queue.size)
             }
 
+            val api = HttpGeminiApi(key, http, MODELS) { msg -> _progress.value = _progress.value.copy(message = msg) }
+            val analyzer = SongAnalyzer(api)
+            val timings = ArrayDeque<Long>()
             var done = 0
-            var sinceUpload = 0
-            _progress.value = Progress(running = true, done = 0, total = pending.size)
-            for (queued in pending) {
-                // It may have been deleted, edited, or already sorted by the other phone meanwhile.
+            var unsynced = 0
+            publish(Progress(running = true, total = queue.size))
+
+            for (queued in queue) {
+                currentCoroutineContext().ensureActive()
+                // It may have been deleted, re-tagged by hand, or already sorted by the other phone meanwhile.
                 val song = repo.getSongById(queued.id)
-                if (song == null || song.categories != null) {
+                if (song == null || !SongSortPolicy.needsSorting(song.categoryTier, song.categoryTries)) {
                     done++
-                    _progress.value = Progress(running = true, done = done, total = pending.size)
+                    publish(Progress(running = true, done = done, total = queue.size, etaMs = eta(timings, queue.size - done)))
                     continue
                 }
-                when (val outcome = classify(song, key)) {
-                    is Outcome.Done -> {
-                        repo.setSongCategories(song.id, SongTags.serialize(outcome.result.tags))
-                        sinceUpload++
+                publish(Progress(running = true, done = done, total = queue.size, etaMs = eta(timings, queue.size - done), currentTitle = song.title))
+                val started = System.currentTimeMillis()
+
+                when (val a = analyzer.analyze(evidenceFor(song))) {
+                    is Analysis.Done -> {
+                        repo.setSongCategories(song.id, SongTags.serialize(a.verdict.tags), SongSortPolicy.TIER_DEEP)
+                        sorted++
+                        unsynced++
                     }
-                    Outcome.Failed -> repo.bumpSongCategoryTries(song.id)
-                    Outcome.Offline -> {
-                        _progress.value = Progress(done = done, total = pending.size, message = "No internet - song sorting will continue when you're back online")
-                        finish(sinceUpload)
-                        return
-                    }
-                    Outcome.RateLimited -> {
-                        _progress.value = Progress(done = done, total = pending.size, message = "Gemini's free limit was reached - sorting will continue later")
-                        finish(sinceUpload)
-                        return
-                    }
-                    Outcome.BadKey -> {
-                        _progress.value = Progress(total = pending.size, needsKey = true, message = "Gemini rejected the API key - check it in Settings")
-                        finish(sinceUpload)
-                        return
-                    }
+                    is Analysis.Failed -> repo.bumpSongCategoryTries(song.id)
+                    Analysis.Offline -> return stop(
+                        Summary(RunResult.RETRY_LATER, sorted, queue.size), unsynced,
+                        Progress(done = done, total = queue.size, message = "No internet - sorting resumes by itself when you're back online"), onUpdate
+                    )
+                    is Analysis.RateLimited -> return stop(
+                        Summary(RunResult.RETRY_LATER, sorted, queue.size), unsynced,
+                        Progress(
+                            done = done, total = queue.size,
+                            message = if (a.daily) "Gemini's free daily limit is used up - sorting resumes by itself (usually tomorrow)"
+                            else "Gemini's limit was reached - sorting resumes by itself shortly"
+                        ), onUpdate
+                    )
+                    Analysis.BadKey -> return stop(
+                        Summary(RunResult.BLOCKED, sorted, queue.size), unsynced,
+                        Progress(total = queue.size, needsKey = true, message = "Gemini rejected the API key - check it in Settings"), onUpdate
+                    )
                 }
                 done++
-                _progress.value = Progress(running = true, done = done, total = pending.size)
-                if (sinceUpload >= UPLOAD_EVERY) {
+                timings.addLast(System.currentTimeMillis() - started)
+                if (timings.size > ETA_WINDOW) timings.removeFirst()
+                publish(Progress(running = true, done = done, total = queue.size, etaMs = eta(timings, queue.size - done)))
+                if (unsynced >= UPLOAD_EVERY) {
                     syncNow()
-                    sinceUpload = 0
+                    unsynced = 0
                 }
-                delay(PACE_MS)
             }
-            finish(sinceUpload)
-            _progress.value = Progress()
+            if (unsynced > 0) syncNow()
+            publish(Progress())
         } while (kicked.get())
+        return Summary(RunResult.FINISHED, sorted, lastTotal)
     }
 
-    private suspend fun finish(unsynced: Int) {
+    private suspend fun stop(summary: Summary, unsynced: Int, final: Progress, onUpdate: suspend (Progress) -> Unit): Summary {
         if (unsynced > 0) syncNow()
+        _progress.value = final
+        onUpdate(final)
+        return summary
     }
 
-    // ------------------------------------------------------------------------------------
+    private fun eta(timings: ArrayDeque<Long>, remaining: Int): Long? =
+        if (timings.isEmpty() || remaining < 0) null else (timings.average() * remaining).toLong()
 
-    private sealed interface Outcome {
-        data class Done(val result: SongClassification) : Outcome
-        object Failed : Outcome
-        object Offline : Outcome
-        object RateLimited : Outcome
-        object BadKey : Outcome
-    }
-
-    private suspend fun classify(song: SongMessageEntity, key: String): Outcome {
-        val info = YoutubeMetadataFetcher.fetchInfo(song.youtubeUrl)
-        val title = song.title?.takeIf { it.isNotBlank() } ?: info?.title
-        if (song.title.isNullOrBlank() && info?.title != null) repo.setSongTitle(song.id, info.title)
-
-        var best: SongClassification? = null
-
-        // Pass 1: Gemini recalls the song (lyrics, film, year) from its title + channel + note.
-        if (!title.isNullOrBlank()) {
-            val prompt = SongPrompt.build(title, info?.channel, song.note, withVideo = false)
-            when (val g = generate(key, JSONArray().put(JSONObject().put("text", prompt)), lowRes = false)) {
-                is Gen.Text -> best = SongClassificationParser.parseModelText(g.text)
-                Gen.Offline -> return Outcome.Offline
-                Gen.RateLimited -> return Outcome.RateLimited
-                Gen.BadKey -> return Outcome.BadKey
-                is Gen.Failed -> Unit
-            }
-            val firstAnswer = best
-            if (firstAnswer != null && firstAnswer.isConfident) return Outcome.Done(firstAnswer)
-        }
-
-        // Pass 2: not sure it knows the song -> let Gemini actually watch/listen to the video.
-        val videoUrl = YoutubeIds.canonicalUrl(song.youtubeUrl)
-        if (videoUrl != null) {
-            delay(PACE_MS)
-            val prompt = SongPrompt.build(title, info?.channel, song.note, withVideo = true)
-            val parts = JSONArray()
-                .put(JSONObject().put("file_data", JSONObject().put("file_uri", videoUrl)))
-                .put(JSONObject().put("text", prompt))
-            when (val g = generate(key, parts, lowRes = true)) {
-                is Gen.Text -> {
-                    val fromVideo = SongClassificationParser.parseModelText(g.text)
-                    if (fromVideo != null && fromVideo.moods.isNotEmpty()) return Outcome.Done(fromVideo)
-                }
-                Gen.Offline -> return Outcome.Offline
-                Gen.RateLimited -> return Outcome.RateLimited
-                Gen.BadKey -> return Outcome.BadKey
-                is Gen.Failed -> Unit
-            }
-        }
-
-        // Keep the unsure first answer rather than nothing at all.
-        val fallback = best
-        return if (fallback != null && fallback.moods.isNotEmpty()) Outcome.Done(fallback) else Outcome.Failed
-    }
-
-    // ------------------------------------------------------------------------------------
-    // Gemini HTTP
-    // ------------------------------------------------------------------------------------
-
-    private sealed interface Gen {
-        data class Text(val text: String) : Gen
-        data class Failed(val reason: String) : Gen
-        object Offline : Gen
-        object RateLimited : Gen
-        object BadKey : Gen
-    }
-
-    private sealed interface Call {
-        data class Ok(val body: String) : Call
-        data class Limited(val waitMs: Long) : Call
-        object Overloaded : Call
-        data class Rejected(val code: Int, val message: String) : Call
-        object Offline : Call
-    }
-
-    private fun requestBody(parts: JSONArray, useSchema: Boolean, lowRes: Boolean): JSONObject {
-        val config = JSONObject().put("temperature", 0.2).put("responseMimeType", "application/json")
-        if (useSchema) config.put("responseSchema", SongPrompt.schema())
-        if (lowRes) config.put("mediaResolution", "MEDIA_RESOLUTION_LOW")   // far fewer tokens per video second
-        return JSONObject()
-            .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
-            .put("generationConfig", config)
-    }
-
-    private suspend fun call(model: String, key: String, body: JSONObject): Call = withContext(Dispatchers.IO) {
-        try {
-            val req = Request.Builder()
-                .url("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
-                .addHeader("x-goog-api-key", key)
-                .addHeader("content-type", "application/json")
-                .post(body.toString().toRequestBody("application/json".toMediaType()))
-                .build()
-            http.newCall(req).execute().use { resp ->
-                val text = resp.body?.string() ?: ""
-                when {
-                    resp.isSuccessful -> Call.Ok(text)
-                    resp.code == 429 -> Call.Limited(SongClassificationParser.retryDelayMs(text))
-                    resp.code == 503 || text.contains("overloaded", ignoreCase = true) -> Call.Overloaded
-                    else -> Call.Rejected(resp.code, errorMessage(text))
-                }
-            }
-        } catch (e: IOException) {
-            Call.Offline
-        }
-    }
-
-    private fun errorMessage(body: String): String = try {
-        JSONObject(body).optJSONObject("error")?.optString("message", "") ?: body.take(200)
-    } catch (e: Exception) {
-        body.take(200)
-    }
-
-    private suspend fun generate(key: String, parts: JSONArray, lowRes: Boolean): Gen {
-        var useSchema = true
-        var lowResOn = lowRes
-        var modelIdx = 0
-        var limitedTries = 0
-        var busyTries = 0
-        while (true) {
-            val model = MODELS.getOrNull(modelIdx) ?: return Gen.Failed("no Gemini model accepted the request")
-            when (val r = call(model, key, requestBody(parts, useSchema, lowResOn))) {
-                is Call.Ok -> {
-                    val text = SongClassificationParser.textOfResponse(r.body)
-                    return if (text != null) Gen.Text(text) else Gen.Failed("empty or blocked answer")
-                }
-                is Call.Limited -> {
-                    if (++limitedTries > MAX_RATE_RETRIES) return Gen.RateLimited
-                    _progress.value = _progress.value.copy(message = "Waiting for Gemini's rate limit…")
-                    delay(r.waitMs)
-                    _progress.value = _progress.value.copy(message = null)
-                }
-                Call.Overloaded -> {
-                    if (++busyTries > 2) { modelIdx++; busyTries = 0 }
-                    delay(3_000L)
-                }
-                Call.Offline -> return Gen.Offline
-                is Call.Rejected -> when {
-                    r.message.contains("API key", ignoreCase = true) -> return Gen.BadKey
-                    r.code == 400 && useSchema -> useSchema = false           // schema not accepted: rely on the prompt
-                    r.code == 400 && lowResOn -> lowResOn = false             // mediaResolution not accepted
-                    (r.code == 400 || r.code == 404) && modelIdx + 1 < MODELS.size -> modelIdx++
-                    else -> return Gen.Failed("HTTP ${r.code}: ${r.message}")
-                }
-            }
-        }
+    private suspend fun evidenceFor(song: SongMessageEntity): SongEvidence {
+        val details = YoutubeMetadataFetcher.fetchDetails(song.youtubeUrl)
+        val title = song.title?.takeIf { it.isNotBlank() } ?: details?.title
+        if (song.title.isNullOrBlank() && details?.title != null) repo.setSongTitle(song.id, details.title)
+        return SongEvidence(
+            title = title,
+            channel = details?.channel,
+            uploadDate = details?.uploadDate,
+            description = details?.description,
+            keywords = details?.keywords ?: emptyList(),
+            note = song.note,
+            videoUrl = YoutubeIds.canonicalUrl(song.youtubeUrl)
+        )
     }
 
     private companion object {
+        const val WORK_NAME = "song_sort"
         // Same models the AI assistant already uses.
         val MODELS = listOf("gemini-3.8-flash", "gemini-3.5-flash-lite")
-        const val MAX_TRIES = 3
-        const val MAX_RATE_RETRIES = 4
-        const val UPLOAD_EVERY = 10
-        const val PACE_MS = 4_500L   // ~13 requests a minute, inside the free tier
+        const val UPLOAD_EVERY = 5
+        const val ETA_WINDOW = 6
     }
 }

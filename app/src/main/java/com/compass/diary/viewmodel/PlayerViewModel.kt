@@ -9,6 +9,7 @@ import com.compass.diary.data.repository.DiaryRepository
 import com.compass.diary.data.repository.DriveSync
 import com.compass.diary.util.PlayerState
 import com.compass.diary.util.SongClassifier
+import com.compass.diary.util.SongSortPolicy
 import com.compass.diary.util.SongTag
 import com.compass.diary.util.SongTags
 import com.compass.diary.util.PlayerStateStore
@@ -65,7 +66,8 @@ class PlayerViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     /** Songs the AI has not sorted yet (new, in progress, or given up on). */
-    val unsortedCount: StateFlow<Int> = allSongs.map { songs -> songs.count { it.categories == null } }
+    val unsortedCount: StateFlow<Int> = allSongs
+        .map { songs -> songs.count { SongSortPolicy.needsSorting(it.categoryTier, it.categoryTries) } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     val sortProgress: StateFlow<SongClassifier.Progress> = classifier.progress
@@ -198,7 +200,7 @@ class PlayerViewModel @Inject constructor(
             allSongs.collect { songs ->
                 if (initialResolved) refreshList(songs)   // new songs join the queue right away
                 backfillMissingTitles(songs)
-                if (songs.any { it.categories == null }) classifier.kick()
+                if (songs.any { SongSortPolicy.needsSorting(it.categoryTier, it.categoryTries) }) classifier.kick()
             }
         }
         // Save position locally every 5s while playing; upload to Drive every 15s.
@@ -294,9 +296,18 @@ class PlayerViewModel @Inject constructor(
     /** Manual fix of a song's tags (the AI can be wrong); saved and synced like the AI's result. */
     fun setSongTags(songId: Long, tags: Set<SongTag>) {
         viewModelScope.launch {
-            repo.setSongCategories(songId, SongTags.serialize(tags))
+            // Edited by hand: the AI never overwrites this song's tags again (unless you ask it to re-sort).
+            repo.setSongCategories(songId, SongTags.serialize(tags), SongSortPolicy.TIER_MANUAL)
             delay(2000)
             classifier.syncNow()
+        }
+    }
+
+    /** "Re-sort with AI": run the deep analysis again for this one song. */
+    fun resortSong(songId: Long) {
+        viewModelScope.launch {
+            repo.markSongForResort(songId)
+            classifier.kick(force = true)
         }
     }
 
@@ -304,7 +315,7 @@ class PlayerViewModel @Inject constructor(
     fun retryUnsorted() {
         viewModelScope.launch {
             repo.resetSongCategoryTries()
-            classifier.kick()
+            classifier.kick(force = true)
         }
     }
 

@@ -17,7 +17,9 @@ data class SongMessageEntity(
     /** When [categories] last changed (AI or manual edit); the newest copy wins when two phones sync. */
     @ColumnInfo(defaultValue = "0") val categoriesAt: Long = 0,
     /** Failed sorting attempts on this phone (not synced); stops endless retries. */
-    @ColumnInfo(defaultValue = "0") val categoryTries: Int = 0
+    @ColumnInfo(defaultValue = "0") val categoryTries: Int = 0,
+    /** How [categories] was decided: 0 = not sorted / old quick AI pass, 2 = deep AI analysis, 9 = edited by hand. */
+    @ColumnInfo(defaultValue = "0") val categoryTier: Int = 0
 )
 
 @Entity(tableName = "voice_messages")

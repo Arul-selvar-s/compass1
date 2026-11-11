@@ -48,6 +48,7 @@ import coil.compose.AsyncImage
 import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.ui.theme.CompassColors
 import com.compass.diary.util.PlayerMediaSessionEffect
+import com.compass.diary.util.EtaFormat
 import com.compass.diary.util.SongClassifier
 import com.compass.diary.util.SongTag
 import com.compass.diary.util.SongTagGroup
@@ -292,6 +293,10 @@ fun PlayerScreen(
             onDismiss = { editingTagsOf = null },
             onSave = { tags ->
                 viewModel.setSongTags(editing.id, tags)
+                editingTagsOf = null
+            },
+            onResort = {
+                viewModel.resortSong(editing.id)
                 editingTagsOf = null
             }
         )
@@ -770,13 +775,22 @@ private fun SubCategoryBar(
             )
             progress.running -> Column(Modifier.padding(top = 6.dp)) {
                 Text(
-                    "Sorting songs by meaning… ${progress.done}/${progress.total}",
+                    "Sorting songs by meaning… ${progress.done}/${progress.total}" +
+                        (EtaFormat.text(progress.etaMs)?.let { " · $it left" } ?: ""),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 LinearProgressIndicator(
                     progress = { if (progress.total == 0) 0f else progress.done.toFloat() / progress.total },
                     modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
+                )
+                progress.currentTitle?.let {
+                    Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(
+                    "Each song is researched, listened to and double-checked, so this takes a while. You can close the app: sorting continues in the background.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 progress.message?.let {
                     Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -873,7 +887,7 @@ private fun SongTagsRow(song: SongMessageEntity, onEdit: () -> Unit) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun EditTagsDialog(song: SongMessageEntity, onDismiss: () -> Unit, onSave: (Set<SongTag>) -> Unit) {
+private fun EditTagsDialog(song: SongMessageEntity, onDismiss: () -> Unit, onSave: (Set<SongTag>) -> Unit, onResort: () -> Unit) {
     var picked by remember(song.id) { mutableStateOf(SongTags.parse(song.categories)) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -902,6 +916,8 @@ private fun EditTagsDialog(song: SongMessageEntity, onDismiss: () -> Unit, onSav
                         )
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = onResort) { Text("Re-sort this song with AI") }
             }
         },
         confirmButton = { TextButton(onClick = { onSave(picked) }) { Text("Save") } },

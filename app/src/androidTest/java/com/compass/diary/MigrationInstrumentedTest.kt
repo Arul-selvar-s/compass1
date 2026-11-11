@@ -21,7 +21,7 @@ import org.junit.runner.RunWith
 class MigrationInstrumentedTest {
 
     @Test
-    fun versionSevenDatabaseUpgradesAndKeepsTheSong() = runBlocking {
+    fun versionSevenDatabaseUpgradesToNineAndKeepsTheSong() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val db = AppDatabase.create(context)
         try {
@@ -36,13 +36,15 @@ class MigrationInstrumentedTest {
             assertNull("an old song starts unsorted", song.categories)
             assertEquals(0L, song.categoriesAt)
             assertEquals(0, song.categoryTries)
-            assertEquals(8, db.openHelper.readableDatabase.version)
+            assertEquals(9, db.openHelper.readableDatabase.version)
+            assertEquals("an old song starts at the quick tier and gets re-sorted", 0, song.categoryTier)
 
             // the new columns work end to end
-            dao.setCategories(song.id, "love,90s", 1234L)
+            dao.setCategories(song.id, "love,90s", 1234L, 2)
             val saved = dao.getById(song.id)!!
             assertEquals("love,90s", saved.categories)
             assertEquals(1234L, saved.categoriesAt)
+            assertEquals(2, saved.categoryTier)
             dao.bumpCategoryTries(song.id)
             assertEquals(1, dao.getById(song.id)!!.categoryTries)
             dao.resetCategoriesIfUrlChanged(song.id, "https://youtu.be/other")
