@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.compass.diary.util.SongAnalyzerTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-11-11T11:29:08" hostname="runnervmwuk1x" time="0.163">
+  <properties/>
+  <testcase name="everyStepSeesTheEvidenceFromTheEarlierSteps" classname="com.compass.diary.util.SongAnalyzerTest" time="0.138"/>
+  <testcase name="aGarbledJudgeAnswerIsAskedAgainOnceThenFails" classname="com.compass.diary.util.SongAnalyzerTest" time="0.002"/>
+  <testcase name="skipsListeningWhenThereIsNoVideoUrl" classname="com.compass.diary.util.SongAnalyzerTest" time="0.002"/>
+  <testcase name="aBrokenReviewFallsBackToTheJudge" classname="com.compass.diary.util.SongAnalyzerTest" time="0.002"/>
+  <testcase name="stillWorksWhenResearchAndListeningFail" classname="com.compass.diary.util.SongAnalyzerTest" time="0.004"/>
+  <testcase name="stopsAtOnceWhenOfflineLimitedOrKeyIsBad" classname="com.compass.diary.util.SongAnalyzerTest" time="0.003"/>
+  <testcase name="aNewSpicySongIsSortedAsSpicyAnd2020sNotThe90s" classname="com.compass.diary.util.SongAnalyzerTest" time="0.006"/>
+  <testcase name="theReviewerCanFixTheJudge" classname="com.compass.diary.util.SongAnalyzerTest" time="0.003"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

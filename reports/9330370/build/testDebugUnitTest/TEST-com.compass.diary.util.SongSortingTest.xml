@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.compass.diary.util.SongSortingTest" tests="22" skipped="0" failures="0" errors="0" timestamp="2026-11-11T11:29:09" hostname="runnervmwuk1x" time="0.239">
+  <properties/>
+  <testcase name="anOldSongReuploadedLaterKeepsItsRealYear" classname="com.compass.diary.util.SongSortingTest" time="0.0"/>
+  <testcase name="storedTagsRoundTripInStableOrder" classname="com.compass.diary.util.SongSortingTest" time="0.005"/>
+  <testcase name="promptsCarryTheEvidenceAndEveryMood" classname="com.compass.diary.util.SongSortingTest" time="0.002"/>
+  <testcase name="unknownYearOfABrandNewUploadIsTreatedAsNewButOldUploadsStayUnknown" classname="com.compass.diary.util.SongSortingTest" time="0.001"/>
+  <testcase name="atMostFourMoods" classname="com.compass.diary.util.SongSortingTest" time="0.0"/>
+  <testcase name="reviewerCorrectsTheJudgesWrongDecade" classname="com.compass.diary.util.SongSortingTest" time="0.0"/>
+  <testcase name="extractsVideoIds" classname="com.compass.diary.util.SongSortingTest" time="0.007"/>
+  <testcase name="sortingPolicy" classname="com.compass.diary.util.SongSortingTest" time="0.002"/>
+  <testcase name="parserToleratesFencesNullYearsAndMissingMoods" classname="com.compass.diary.util.SongSortingTest" time="0.001"/>
+  <testcase name="readsTextSourcesAndErrors" classname="com.compass.diary.util.SongSortingTest" time="0.009"/>
+  <testcase name="spicyIsPickedWhenItScoresHigh" classname="com.compass.diary.util.SongSortingTest" time="0.002"/>
+  <testcase name="aSongWithSeveralTagsIsFoundUnderEachOfThem" classname="com.compass.diary.util.SongSortingTest" time="0.001"/>
+  <testcase name="erasAreDerivedFromTheYear" classname="com.compass.diary.util.SongSortingTest" time="0.0"/>
+  <testcase name="parsesAJudgement" classname="com.compass.diary.util.SongSortingTest" time="0.001"/>
+  <testcase name="readsTheWatchPage" classname="com.compass.diary.util.SongSortingTest" time="0.013"/>
+  <testcase name="moodsAreAveragedSoOneSlipDoesNotDecide" classname="com.compass.diary.util.SongSortingTest" time="0.001"/>
+  <testcase name="migrationsKeepExistingSongsAndAddTheColumns" classname="com.compass.diary.util.SongSortingTest" time="0.174"/>
+  <testcase name="tagTextIsMatchedLoosely" classname="com.compass.diary.util.SongSortingTest" time="0.0"/>
+  <testcase name="aYearAfterTheUploadIsImpossibleAndIgnored" classname="com.compass.diary.util.SongSortingTest" time="0.001"/>
+  <testcase name="schemaScoresEveryMood" classname="com.compass.diary.util.SongSortingTest" time="0.001"/>
+  <testcase name="formatsTimeLeft" classname="com.compass.diary.util.SongSortingTest" time="0.005"/>
+  <testcase name="nothingScoringHighEnoughMeansNoVerdict" classname="com.compass.diary.util.SongSortingTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+]]></system-err>
+</testsuite>
