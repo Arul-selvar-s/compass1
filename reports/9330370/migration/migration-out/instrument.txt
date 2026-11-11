@@ -1,0 +1,8 @@
+
+com.compass.diary.MigrationInstrumentedTest:.
+
+Time: 0.043
+
+OK (1 test)
+
+

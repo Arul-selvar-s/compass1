@@ -1,0 +1,3 @@
+found 12 create statements
+built v7 database; song_messages: CREATE TABLE `song_messages` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `youtubeUrl` TEXT NOT NULL, `note` TEXT, `sender` TEXT NOT NULL, `sentAt` INTEGER NOT NULL, `title` TEXT)
+identity hash row: [(42, 'd204454cb6bc6779de8226234db7cb10')]

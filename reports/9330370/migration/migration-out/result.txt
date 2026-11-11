@@ -1,0 +1,4 @@
+MIGRATION ok:   version-7 database placed in the app's storage
+MIGRATION ok:   instrumented test passed: 7 -> 9 migration + Room validation + song kept
+MIGRATION ok:   database file is now version 9 with the new columns
+MIGRATION exit=0
