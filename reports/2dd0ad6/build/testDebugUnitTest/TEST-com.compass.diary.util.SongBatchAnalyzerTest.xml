@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.compass.diary.util.SongBatchAnalyzerTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-11-23T19:34:35" hostname="runnervm0hi8g" time="0.024">
+  <properties/>
+  <testcase name="aReleaseYearAfterTheUploadIsNotBelieved" classname="com.compass.diary.util.SongBatchAnalyzerTest" time="0.004"/>
+  <testcase name="oneQuestionSortsAWholeBatch" classname="com.compass.diary.util.SongBatchAnalyzerTest" time="0.002"/>
+  <testcase name="aSongNothingFitsIsLeftOutSoItCanBeCounted" classname="com.compass.diary.util.SongBatchAnalyzerTest" time="0.002"/>
+  <testcase name="theQuestionIsFastAndStructured" classname="com.compass.diary.util.SongBatchAnalyzerTest" time="0.002"/>
+  <testcase name="aLimitInTheSecondRoundKeepsWhatTheFirstRoundSorted" classname="com.compass.diary.util.SongBatchAnalyzerTest" time="0.002"/>
+  <testcase name="theParserAcceptsFencesAndBareArrays" classname="com.compass.diary.util.SongBatchAnalyzerTest" time="0.001"/>
+  <testcase name="nothingToAskMeansNoCall" classname="com.compass.diary.util.SongBatchAnalyzerTest" time="0.001"/>
+  <testcase name="theParserSkipsBrokenEntriesAndGarbage" classname="com.compass.diary.util.SongBatchAnalyzerTest" time="0.001"/>
+  <testcase name="songsTheAnswerSkippedAreAskedAgainOnce" classname="com.compass.diary.util.SongBatchAnalyzerTest" time="0.003"/>
+  <testcase name="stopSignalsComeBackAtOnce" classname="com.compass.diary.util.SongBatchAnalyzerTest" time="0.002"/>
+  <testcase name="unreadableAnswersFailAfterOneRetry" classname="com.compass.diary.util.SongBatchAnalyzerTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
