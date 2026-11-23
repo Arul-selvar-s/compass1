@@ -16,6 +16,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +26,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -30,12 +35,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Sorts every song into mood + era by what it MEANS, using the careful multi-step [SongAnalyzer].
+ * Sorts every song into mood + era by what it MEANS, the FAST way: songs go to Gemini in batches of
+ * [BATCH_SIZE] ([SongBatchAnalyzer]), so a whole library takes minutes, not weeks.
  *
  * The work runs inside a WorkManager worker ([SongSortWorker]) with a foreground notification, so it
  * keeps going when the app is closed (Android keeps the notification up while it works) and
- * resumes by itself after a pause (no internet, Gemini's limit). Each finished song is saved at once
- * and pushed to Drive in small batches.
+ * resumes by itself after a pause (no internet, Gemini's limit). Each finished batch is saved at once
+ * and pushed to Drive in small groups.
  */
 @Singleton
 class SongClassifier @Inject constructor(
@@ -81,7 +87,7 @@ class SongClassifier @Inject constructor(
             if (running) return@launch   // the running loop re-checks `kicked` when it finishes
             val request = OneTimeWorkRequestBuilder<SongSortWorker>()
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-                .setBackoffCriteria(BackoffPolicy.LINEAR, 15, TimeUnit.MINUTES)
+                .setBackoffCriteria(BackoffPolicy.LINEAR, 5, TimeUnit.MINUTES)
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build()
             wm.enqueueUniqueWork(WORK_NAME, if (force) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP, request)
@@ -125,51 +131,69 @@ class SongClassifier @Inject constructor(
             }
 
             val api = HttpGeminiApi(key, http, MODELS) { msg -> _progress.value = _progress.value.copy(message = msg) }
-            val analyzer = SongAnalyzer(api)
-            val timings = ArrayDeque<Long>()
+            val analyzer = SongBatchAnalyzer(api)
+            val timings = ArrayDeque<Long>()   // milliseconds per song, for the time-left estimate
             var done = 0
             var unsynced = 0
             publish(Progress(running = true, total = queue.size))
 
-            for (queued in queue) {
+            for (chunk in queue.chunked(BATCH_SIZE)) {
                 currentCoroutineContext().ensureActive()
-                // It may have been deleted, re-tagged by hand, or already sorted by the other phone meanwhile.
-                val song = repo.getSongById(queued.id)
-                if (song == null || !SongSortPolicy.needsSorting(song.categoryTier, song.categoryTries)) {
-                    done++
+                // Songs may have been deleted, re-tagged by hand, or already sorted by the other phone meanwhile.
+                val songs = chunk.mapNotNull { q ->
+                    repo.getSongById(q.id)?.takeIf { SongSortPolicy.needsSorting(it.categoryTier, it.categoryTries) }
+                }
+                done += chunk.size - songs.size
+                if (songs.isEmpty()) {
                     publish(Progress(running = true, done = done, total = queue.size, etaMs = eta(timings, queue.size - done)))
                     continue
                 }
-                publish(Progress(running = true, done = done, total = queue.size, etaMs = eta(timings, queue.size - done), currentTitle = song.title))
+                publish(Progress(running = true, done = done, total = queue.size, etaMs = eta(timings, queue.size - done), currentTitle = songs.first().title))
                 val started = System.currentTimeMillis()
 
-                when (val a = analyzer.analyze(evidenceFor(song))) {
-                    is Analysis.Done -> {
-                        repo.setSongCategories(song.id, SongTags.serialize(a.verdict.tags), SongSortPolicy.TIER_DEEP)
-                        sorted++
-                        unsynced++
+                // Title, channel, description and tags of the whole batch, fetched side by side.
+                val evidence = gatherEvidence(songs)
+                val usable = songs.indices.filter { hasSomethingToGoOn(evidence[it]) }
+                // Songs with nothing known about them cannot be judged: count a try so they do not block the queue forever.
+                songs.indices.filter { it !in usable }.forEach { repo.bumpSongCategoryTries(songs[it].id) }
+
+                when (val out = analyzer.analyze(usable.map { BatchItem(songs[it].id, evidence[it]) })) {
+                    is BatchOutcome.Answered -> usable.forEach { i ->
+                        val song = songs[i]
+                        val verdict = out.verdicts[song.id]
+                        if (verdict != null) {
+                            // TIER_DEEP simply means "sorted by the AI": it is what keeps a song out of the queue.
+                            repo.setSongCategories(song.id, SongTags.serialize(verdict.tags), SongSortPolicy.TIER_DEEP)
+                            sorted++
+                            unsynced++
+                        } else {
+                            repo.bumpSongCategoryTries(song.id)
+                        }
                     }
-                    is Analysis.Failed -> repo.bumpSongCategoryTries(song.id)
-                    Analysis.Offline -> return stop(
+                    is BatchOutcome.Failed -> usable.forEach { repo.bumpSongCategoryTries(songs[it].id) }
+                    BatchOutcome.Offline -> return stop(
                         Summary(RunResult.RETRY_LATER, sorted, queue.size), unsynced,
                         Progress(done = done, total = queue.size, message = "No internet - sorting resumes by itself when you're back online"), onUpdate
                     )
-                    is Analysis.RateLimited -> return stop(
+                    is BatchOutcome.RateLimited -> return stop(
                         Summary(RunResult.RETRY_LATER, sorted, queue.size), unsynced,
                         Progress(
                             done = done, total = queue.size,
-                            message = if (a.daily) "Gemini's free daily limit is used up - sorting resumes by itself (usually tomorrow)"
+                            message = if (out.daily) "Gemini's free daily limit is used up - sorting resumes by itself (usually tomorrow)"
                             else "Gemini's limit was reached - sorting resumes by itself shortly"
                         ), onUpdate
                     )
-                    Analysis.BadKey -> return stop(
+                    BatchOutcome.BadKey -> return stop(
                         Summary(RunResult.BLOCKED, sorted, queue.size), unsynced,
                         Progress(total = queue.size, needsKey = true, message = "Gemini rejected the API key - check it in Settings"), onUpdate
                     )
                 }
-                done++
-                timings.addLast(System.currentTimeMillis() - started)
-                if (timings.size > ETA_WINDOW) timings.removeFirst()
+                done += songs.size
+                val perSong = (System.currentTimeMillis() - started) / songs.size
+                repeat(songs.size.coerceAtMost(ETA_WINDOW)) {
+                    timings.addLast(perSong)
+                    if (timings.size > ETA_WINDOW) timings.removeFirst()
+                }
                 publish(Progress(running = true, done = done, total = queue.size, etaMs = eta(timings, queue.size - done)))
                 if (unsynced >= UPLOAD_EVERY) {
                     syncNow()
@@ -192,6 +216,14 @@ class SongClassifier @Inject constructor(
     private fun eta(timings: ArrayDeque<Long>, remaining: Int): Long? =
         if (timings.isEmpty() || remaining < 0) null else (timings.average() * remaining).toLong()
 
+    /** YouTube details for several songs at once (a few requests in parallel, in the order given). */
+    private suspend fun gatherEvidence(songs: List<SongMessageEntity>): List<SongEvidence> = coroutineScope {
+        val gate = Semaphore(FETCH_PARALLEL)
+        songs.map { song -> async { gate.withPermit { evidenceFor(song) } } }.awaitAll()
+    }
+
+    private fun hasSomethingToGoOn(e: SongEvidence) = !e.title.isNullOrBlank() || !e.description.isNullOrBlank()
+
     private suspend fun evidenceFor(song: SongMessageEntity): SongEvidence {
         val details = YoutubeMetadataFetcher.fetchDetails(song.youtubeUrl)
         val title = song.title?.takeIf { it.isNotBlank() } ?: details?.title
@@ -211,7 +243,9 @@ class SongClassifier @Inject constructor(
         const val WORK_NAME = "song_sort"
         // Same models the AI assistant already uses.
         val MODELS = listOf("gemini-3.8-flash", "gemini-3.5-flash-lite")
-        const val UPLOAD_EVERY = 5
-        const val ETA_WINDOW = 6
+        const val BATCH_SIZE = 12       // songs per Gemini question
+        const val FETCH_PARALLEL = 6    // YouTube page fetches at the same time
+        const val UPLOAD_EVERY = 24     // push to Drive after this many newly sorted songs
+        const val ETA_WINDOW = 12
     }
 }

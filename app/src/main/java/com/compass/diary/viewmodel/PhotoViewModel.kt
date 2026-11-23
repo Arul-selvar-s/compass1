@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.compass.diary.data.local.entity.PhotoEntity
 import com.compass.diary.data.repository.DiaryRepository
 import com.compass.diary.data.repository.DriveSync
+import com.compass.diary.util.AppSyncManager
 import com.compass.diary.util.PhotoCompressor
 import com.compass.diary.util.PreferencesManager
 import com.compass.diary.util.SyncScheduler
@@ -23,6 +24,7 @@ class PhotoViewModel @Inject constructor(
     private val repo: DiaryRepository,
     private val driveSync: DriveSync,
     private val prefs: PreferencesManager,
+    private val appSync: AppSyncManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -67,7 +69,7 @@ class PhotoViewModel @Inject constructor(
                         repo.setPhotoDriveFileId(id, fileId)
                     }
                 } catch (e: Exception) { /* immediate sync job below will retry */ }
-                SyncScheduler.requestImmediateSync(context)
+                appSync.requestPush()
             }
         }
     }
@@ -82,7 +84,7 @@ class PhotoViewModel @Inject constructor(
                 val f = photoFile(p.fileName)
                 if (f.exists()) f.delete()
             }
-            SyncScheduler.requestImmediateSync(context)
+            appSync.requestPush()
         }
     }
 }

@@ -6,11 +6,13 @@ import androidx.lifecycle.viewModelScope
 import com.compass.diary.data.local.entity.*
 import com.compass.diary.data.repository.DiaryRepository
 import com.compass.diary.data.repository.DriveSync
+import com.compass.diary.util.AppSyncManager
 import com.compass.diary.util.AutoSaveManager
 import com.compass.diary.util.CompassSensorManager
 import com.compass.diary.util.PreferencesManager
 import com.compass.diary.util.SaveState
 import com.compass.diary.util.SyncScheduler
+import com.compass.diary.util.TodayClock
 import com.compass.diary.util.UpdateChecker
 import com.compass.diary.util.UpdateInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -124,10 +126,13 @@ class DiaryViewModel @Inject constructor(
     private val autoSave: AutoSaveManager,
     private val driveSync: DriveSync,
     private val prefs: PreferencesManager,
+    private val appSync: AppSyncManager,
+    private val todayClock: TodayClock,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
-    val todayKey: StateFlow<String> = MutableStateFlow(LocalDate.now().toString())
+    /** Today's date key; moves on by itself at midnight (see TodayClock). */
+    val todayKey: StateFlow<String> = todayClock.todayKey
 
     val allEntries: StateFlow<List<DiaryEntryEntity>> = repo.getAllEntries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -150,6 +155,10 @@ class DiaryViewModel @Inject constructor(
     val lastSyncAt: StateFlow<Long?> = prefs.lastSyncAt
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    /** Why the last sync failed (null = it worked). */
+    val syncError: StateFlow<String?> = prefs.lastSyncError
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     private val _selectedKey = MutableStateFlow<String?>(null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -169,33 +178,8 @@ class DiaryViewModel @Inject constructor(
     val completedReminders: StateFlow<List<ReminderEntity>> = repo.getCompletedReminders()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    init {
-        viewModelScope.launch {
-            while (true) {
-                val account = prefs.googleAccount.first()
-                val enabled = prefs.isAutoSyncEnabled.first()
-                if (!account.isNullOrBlank() && enabled) {
-                    driveSync.downloadAndRestore()
-                }
-                kotlinx.coroutines.delay(12_000)
-            }
-        }
-    }
-
-    private var syncJob: kotlinx.coroutines.Job? = null
-
-    private fun scheduleSync() {
-        syncJob?.cancel()
-        syncJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(3000)
-            val account = prefs.googleAccount.first()
-            val enabled = prefs.isAutoSyncEnabled.first()
-            if (!account.isNullOrBlank() && enabled) {
-                driveSync.uploadAll()
-            }
-        }
-        SyncScheduler.requestImmediateSync(context)
-    }
+    /** Something changed on this phone: upload soon (app-wide, so it survives leaving this screen). */
+    private fun scheduleSync() = appSync.requestPush()
 
     private val _refreshStatus = MutableStateFlow<String?>(null)
     val refreshStatus: StateFlow<String?> = _refreshStatus
@@ -210,10 +194,11 @@ class DiaryViewModel @Inject constructor(
                 _refreshStatus.value = null
                 return@launch
             }
-            driveSync.downloadAndRestore().fold(
-                onSuccess = { _refreshStatus.value = "Updated ✓" },
-                onFailure = { _refreshStatus.value = "Refresh failed: ${it.message}" }
-            )
+            // Pull everything (even if it looks unchanged), then send anything not uploaded yet.
+            val pulled = driveSync.downloadAndRestore(force = true)
+            val pushed = if (pulled.isSuccess) driveSync.uploadAll(onlyIfChanged = true) else null
+            val failure = pulled.exceptionOrNull() ?: pushed?.exceptionOrNull()
+            _refreshStatus.value = if (failure == null) "Updated ✓" else "Refresh failed: ${failure.message}"
             kotlinx.coroutines.delay(2000)
             _refreshStatus.value = null
         }
@@ -287,8 +272,7 @@ class DiaryViewModel @Inject constructor(
     fun removeStarred(id: Long) {
         viewModelScope.launch {
             repo.removeStarred(id)
-            driveSync.uploadAll()
-            SyncScheduler.requestImmediateSync(context)
+            scheduleSync()
         }
     }
 
@@ -307,7 +291,7 @@ class DiaryViewModel @Inject constructor(
     fun deleteReminder(r: ReminderEntity) { viewModelScope.launch { repo.deleteReminder(r); scheduleSync() } }
     fun markReminderComplete(id: Long) { viewModelScope.launch { repo.markReminderCompleted(id); scheduleSync() } }
 
-    override fun onCleared() { super.onCleared(); autoSave.dispose(); syncJob?.cancel() }
+    override fun onCleared() { super.onCleared(); autoSave.dispose() }
 }
 
 @HiltViewModel
@@ -324,6 +308,7 @@ class SettingsViewModel @Inject constructor(
     val biometricEnabled: StateFlow<Boolean> = prefs.isBiometricEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
     val anthropicApiKey: StateFlow<String?>  = prefs.anthropicApiKey.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
     val lastSyncAt: StateFlow<Long?>         = prefs.lastSyncAt.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    val syncError: StateFlow<String?>        = prefs.lastSyncError.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     private val _syncStatus = MutableStateFlow("")
     val syncStatus: StateFlow<String> = _syncStatus

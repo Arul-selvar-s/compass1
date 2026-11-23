@@ -56,6 +56,7 @@ fun SettingsScreen(
     val account     by viewModel.googleAccount.collectAsState()
     val syncStatus  by viewModel.syncStatus.collectAsState()
     val lastSyncAt  by viewModel.lastSyncAt.collectAsState()
+    val syncError   by viewModel.syncError.collectAsState()
     val apiKey      by viewModel.anthropicApiKey.collectAsState()
     var showApiDlg  by remember { mutableStateOf(false) }
     val updateInfo  by viewModel.updateInfo.collectAsState()
@@ -121,6 +122,9 @@ fun SettingsScreen(
                         Text("Auto-sync", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                         Text("Last synced: $syncLabel", style = MaterialTheme.typography.bodySmall,
                             color = if (lastSyncAt == null) CompassColors.Warning else MaterialTheme.colorScheme.onSurfaceVariant)
+                        syncError?.let {
+                            Text("Last attempt failed: $it", style = MaterialTheme.typography.bodySmall, color = CompassColors.Warning)
+                        }
                     }
                     Switch(autoSync, viewModel::setAutoSync)
                 }

@@ -28,7 +28,9 @@ data class GeminiRequest(
     /** Let Gemini search Google while answering (cannot be combined with [json]). */
     val grounded: Boolean = false,
     val lowRes: Boolean = false,
-    val thinking: Boolean = true
+    val thinking: Boolean = true,
+    /** How many tokens the model may spend thinking first (less = faster). */
+    val thinkingBudget: Int = 8192
 )
 
 /** The one place that talks to Gemini; faked in tests. */
@@ -158,7 +160,7 @@ class HttpGeminiApi(
         if (request.json) config.put("responseMimeType", "application/json")
         if (request.json && f.schema && request.schema != null) config.put("responseSchema", request.schema)
         if (f.lowRes) config.put("mediaResolution", "MEDIA_RESOLUTION_LOW")
-        if (f.thinking) config.put("thinkingConfig", JSONObject().put("thinkingBudget", THINKING_BUDGET))
+        if (f.thinking) config.put("thinkingConfig", JSONObject().put("thinkingBudget", request.thinkingBudget))
         val parts = JSONArray().also { a -> request.parts.forEach { a.put(it) } }
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
@@ -196,6 +198,5 @@ class HttpGeminiApi(
 
     private companion object {
         const val MAX_RATE_RETRIES = 4
-        const val THINKING_BUDGET = 8192
     }
 }

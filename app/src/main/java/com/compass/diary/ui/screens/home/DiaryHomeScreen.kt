@@ -56,6 +56,7 @@ fun DiaryHomeScreen(
     val todayKey      by viewModel.todayKey.collectAsState()
     val refreshStatus by viewModel.refreshStatus.collectAsState()
     val lastSyncAt    by viewModel.lastSyncAt.collectAsState()
+    val syncError     by viewModel.syncError.collectAsState()
 
     var tick by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) { while (true) { delay(30_000); tick++ } }
@@ -69,12 +70,12 @@ fun DiaryHomeScreen(
                         Column {
                             Text("Compass", fontWeight = FontWeight.Bold)
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(LocalDate.now().format(DateTimeFormatter.ofPattern("MMMM yyyy")),
+                                Text(remember(todayKey) { runCatching { LocalDate.parse(todayKey) }.getOrDefault(LocalDate.now()) }.format(DateTimeFormatter.ofPattern("MMMM yyyy")),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text("  •  Synced $syncLabel",
+                                Text(if (syncError != null) "  •  Sync problem · last OK $syncLabel" else "  •  Synced $syncLabel",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (lastSyncAt == null) CompassColors.Warning else MaterialTheme.colorScheme.onSurfaceVariant)
+                                    color = if (lastSyncAt == null || syncError != null) CompassColors.Warning else MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     },

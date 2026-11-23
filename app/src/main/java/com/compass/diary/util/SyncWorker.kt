@@ -9,6 +9,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.first
 
+/** Background sync (even when the app is closed): take in the other phone's changes, then upload ours. */
 @HiltWorker
 class SyncWorker @AssistedInject constructor(
     @Assisted context: Context,
@@ -22,9 +23,18 @@ class SyncWorker @AssistedInject constructor(
         val enabled = prefs.isAutoSyncEnabled.first()
         if (account.isNullOrBlank() || !enabled) return Result.success()
 
-        val uploadOk = driveSync.uploadAll().isSuccess
-        val downloadOk = driveSync.downloadAndRestore().isSuccess
+        // Pull first so an upload never overwrites what the other phone added; upload only if something changed.
+        val pulled = driveSync.downloadAndRestore().isSuccess
+        val pushed = driveSync.uploadAll(onlyIfChanged = true).isSuccess
 
-        return if (uploadOk || downloadOk) Result.success() else Result.retry()
+        return when {
+            pulled && pushed -> Result.success()
+            runAttemptCount < MAX_ATTEMPTS -> Result.retry()
+            else -> Result.success()   // the next periodic run tries again
+        }
+    }
+
+    private companion object {
+        const val MAX_ATTEMPTS = 6
     }
 }

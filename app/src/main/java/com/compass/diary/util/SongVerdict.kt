@@ -1,5 +1,6 @@
 package com.compass.diary.util
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** Everything known about one song before asking the AI. */
@@ -43,7 +44,15 @@ object JudgeParser {
         val end = text.lastIndexOf('}')
         if (start < 0 || end <= start) return null
         return try {
-            val o = JSONObject(text.substring(start, end + 1))
+            fromObject(JSONObject(text.substring(start, end + 1)))
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** One song's answer: release year plus a 0-10 score for the moods (missing moods count as 0). */
+    fun fromObject(o: JSONObject): JudgedSong? {
+        return try {
             val scores = HashMap<SongTag, Float>()
             val raw = o.optJSONObject("mood_scores")
             if (raw != null) {
@@ -75,6 +84,33 @@ object JudgeParser {
         is Number -> v.toInt()
         is String -> Regex("""(19|20)\d\d""").find(v)?.value?.toIntOrNull()
         else -> null
+    }
+}
+
+/** Reads the answer to a batch question: {"songs":[{"n":1, ...}, ...]} (or a bare array). */
+object BatchParser {
+    /** Position in the question (1-based) -> that song's judgement. Songs the model skipped or garbled are absent. */
+    fun parse(text: String): Map<Int, JudgedSong> {
+        val result = HashMap<Int, JudgedSong>()
+        try {
+            val a = text.indexOf('[')
+            val o = text.indexOf('{')
+            val array: JSONArray? = when {
+                a >= 0 && (o < 0 || a < o) -> JSONArray(text.substring(a, text.lastIndexOf(']') + 1))
+                o >= 0 -> JSONObject(text.substring(o, text.lastIndexOf('}') + 1)).optJSONArray("songs")
+                else -> null
+            }
+            if (array != null) {
+                for (i in 0 until array.length()) {
+                    val el = array.optJSONObject(i) ?: continue
+                    val judged = JudgeParser.fromObject(el) ?: continue
+                    result[el.optInt("n", i + 1)] = judged
+                }
+            }
+        } catch (e: Exception) {
+            // an unreadable answer simply has no songs in it
+        }
+        return result
     }
 }
 

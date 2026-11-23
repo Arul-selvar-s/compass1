@@ -12,6 +12,7 @@ import com.compass.diary.data.local.entity.SongMessageEntity
 import com.compass.diary.data.local.entity.VoiceMessageEntity
 import com.compass.diary.data.repository.DiaryRepository
 import com.compass.diary.data.repository.DriveSync
+import com.compass.diary.util.AppSyncManager
 import com.compass.diary.util.AudioCompressor
 import com.compass.diary.util.PreferencesManager
 import com.compass.diary.util.SyncScheduler
@@ -30,6 +31,7 @@ class SongViewModel @Inject constructor(
     private val driveSync: DriveSync,
     private val prefs: PreferencesManager,
     private val classifier: SongClassifier,
+    private val appSync: AppSyncManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -39,17 +41,8 @@ class SongViewModel @Inject constructor(
     val masterControlEnabled: StateFlow<Boolean> = prefs.isMasterControlEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
-    private var syncJob: kotlinx.coroutines.Job? = null
-    private fun scheduleSync() {
-        syncJob?.cancel()
-        syncJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(3000)
-            val account = prefs.googleAccount.first()
-            val enabled = prefs.isAutoSyncEnabled.first()
-            if (!account.isNullOrBlank() && enabled) driveSync.uploadAll()
-        }
-        SyncScheduler.requestImmediateSync(context)
-    }
+    /** Something changed on this phone: upload soon (app-wide, so it survives leaving this screen). */
+    private fun scheduleSync() = appSync.requestPush()
 
     fun sendSong(url: String, note: String?, sender: String, sentAt: Long = System.currentTimeMillis()) {
         val cleanUrl = url.trim()
@@ -96,6 +89,7 @@ class VoiceViewModel @Inject constructor(
     private val repo: DiaryRepository,
     private val driveSync: DriveSync,
     private val prefs: PreferencesManager,
+    private val appSync: AppSyncManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -258,21 +252,11 @@ class VoiceViewModel @Inject constructor(
         }
     }
 
-    private var syncJob: kotlinx.coroutines.Job? = null
-    private fun scheduleSync() {
-        syncJob?.cancel()
-        syncJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(3000)
-            val account = prefs.googleAccount.first()
-            val enabled = prefs.isAutoSyncEnabled.first()
-            if (!account.isNullOrBlank() && enabled) driveSync.uploadAll()
-        }
-        SyncScheduler.requestImmediateSync(context)
-    }
+    /** Something changed on this phone: upload soon (app-wide, so it survives leaving this screen). */
+    private fun scheduleSync() = appSync.requestPush()
 
     override fun onCleared() {
         super.onCleared()
         try { player?.release() } catch (e: Exception) { /* ignore */ }
-        syncJob?.cancel()
     }
 }

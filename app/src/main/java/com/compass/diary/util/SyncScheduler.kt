@@ -2,7 +2,6 @@ package com.compass.diary.util
 
 import android.content.Context
 import androidx.work.*
-import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
 object SyncScheduler {
@@ -13,18 +12,9 @@ object SyncScheduler {
         .setRequiredNetworkType(NetworkType.CONNECTED)
         .build()
 
+    /** Background sync every 15 minutes (Android's minimum) while the app is closed. Name kept for callers. */
     fun scheduleHourlySync(context: Context) {
-        val now = Calendar.getInstance()
-        val nextHour = (now.clone() as Calendar).apply {
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-            add(Calendar.HOUR_OF_DAY, 1)
-        }
-        val initialDelayMs = (nextHour.timeInMillis - now.timeInMillis).coerceAtLeast(0)
-
-        val request = PeriodicWorkRequestBuilder<SyncWorker>(1, TimeUnit.HOURS)
-            .setInitialDelay(initialDelayMs, TimeUnit.MILLISECONDS)
+        val request = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
             .setConstraints(networkConstraints())
             .build()
 
@@ -36,7 +26,9 @@ object SyncScheduler {
     }
 
     fun requestImmediateSync(context: Context) {
+        // A few seconds' delay: while the app is open its own upload goes first and this one finds nothing left to do.
         val request = OneTimeWorkRequestBuilder<SyncWorker>()
+            .setInitialDelay(8, TimeUnit.SECONDS)
             .setConstraints(networkConstraints())
             .build()
 

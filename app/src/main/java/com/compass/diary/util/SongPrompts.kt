@@ -100,6 +100,56 @@ object SongPrompts {
         append("Give your own corrected final answer as JSON only, in the same format: release_year, year_evidence, year_confidence, lyrics_summary, mood_scores (every mood id -> 0..10), reasoning.")
     }
 
+    private fun briefFacts(e: SongEvidence): String = buildString {
+        if (!e.title.isNullOrBlank()) appendLine("- Title: \"${e.title}\"")
+        if (!e.channel.isNullOrBlank()) appendLine("- Channel: \"${e.channel}\"")
+        if (!e.uploadDate.isNullOrBlank()) appendLine("- Uploaded to YouTube on: ${e.uploadDate} (an UPLOAD date, not the release date)")
+        if (!e.description.isNullOrBlank()) appendLine("- Description (may list film, music director, singers, year): \"${e.description.take(500)}\"")
+        if (e.keywords.isNotEmpty()) appendLine("- Tags: ${e.keywords.take(10).joinToString(", ")}")
+        if (!e.note.isNullOrBlank()) appendLine("- Note from the person who shared it: \"${e.note}\"")
+    }
+
+    /** The fast way: ONE question about many songs, answered from the facts plus the model's own knowledge. */
+    fun fastBatch(songs: List<SongEvidence>): String = buildString {
+        appendLine("You sort songs into categories by their MEANING and sound, and say which year each song was released.")
+        appendLine("You know Indian film songs (Tamil, Telugu, Malayalam, Kannada, Hindi) and international songs very well: use that knowledge together with the facts given for each song.")
+        appendLine("No research is needed. ${songs.size} songs follow. Answer for EVERY one of them, using its number as \"n\".")
+        appendLine()
+        songs.forEachIndexed { i, e ->
+            appendLine("=== SONG ${i + 1} ===")
+            append(briefFacts(e))
+            appendLine()
+        }
+        appendLine("MOODS - score EVERY mood for EVERY song from 0 to 10 (0 = does not apply, 5 = partly, 8-10 = a defining quality of the song).")
+        appendLine("Score each mood separately; one song can score high on several. Do not under-score the less common ones: spicy, item and mass numbers matter exactly as much as melodies.")
+        appendLine(moodList())
+        appendLine()
+        appendLine("RELEASE YEAR - the year the song (or its film/album) was officially released, from your own knowledge of the song or its film.")
+        appendLine("NEVER use the YouTube upload date as the release year (it only proves the song cannot be newer than the upload).")
+        appendLine("If you do not know the year, return null: a wrong year is worse than none. year_confidence: 0 to 1.")
+        appendLine()
+        append("Answer with JSON only: {\"songs\": [{\"n\": 1, \"release_year\": 2019, \"year_confidence\": 0.8, \"mood_scores\": {every mood id -> 0..10}}, ...]} with one entry per song.")
+    }
+
+    /** Gemini structured-output schema for [fastBatch]. */
+    fun batchSchema(): JSONObject {
+        val moodProps = JSONObject()
+        SongTags.moods.forEach { moodProps.put(it.id, JSONObject().put("type", "INTEGER")) }
+        val required = JSONArray().also { a -> SongTags.moods.forEach { a.put(it.id) } }
+        val song = JSONObject()
+            .put("type", "OBJECT")
+            .put("properties", JSONObject()
+                .put("n", JSONObject().put("type", "INTEGER"))
+                .put("release_year", JSONObject().put("type", "INTEGER").put("nullable", true))
+                .put("year_confidence", JSONObject().put("type", "NUMBER"))
+                .put("mood_scores", JSONObject().put("type", "OBJECT").put("properties", moodProps).put("required", required)))
+            .put("required", JSONArray().put("n").put("release_year").put("year_confidence").put("mood_scores"))
+        return JSONObject()
+            .put("type", "OBJECT")
+            .put("properties", JSONObject().put("songs", JSONObject().put("type", "ARRAY").put("items", song)))
+            .put("required", JSONArray().put("songs"))
+    }
+
     /** Gemini structured-output schema for the judge/reviewer answer. */
     fun judgeSchema(): JSONObject {
         val moodProps = JSONObject()

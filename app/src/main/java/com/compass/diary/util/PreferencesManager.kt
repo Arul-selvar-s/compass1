@@ -27,6 +27,9 @@ class PreferencesManager @Inject constructor(@ApplicationContext private val ctx
         val KEY_ANTHROPIC_KEY  = stringPreferencesKey("anthropic_key")
         val KEY_LAST_SYNC      = longPreferencesKey("last_sync")
         val KEY_MASTER_CONTROL = booleanPreferencesKey("master_control")
+        val KEY_SYNC_ERROR     = stringPreferencesKey("last_sync_error")
+        val KEY_REMOTE_STAMP   = stringPreferencesKey("remote_stamp")
+        val KEY_PUSHED_HASH    = stringPreferencesKey("pushed_hash")
     }
 
     private val ds = ctx.dataStore
@@ -42,16 +45,29 @@ class PreferencesManager @Inject constructor(@ApplicationContext private val ctx
     val anthropicApiKey: Flow<String?>   = ds.data.catch { emit(emptyPreferences()) }.map { it[KEY_ANTHROPIC_KEY] }
     val isMasterControlEnabled: Flow<Boolean> = ds.data.catch { emit(emptyPreferences()) }.map { it[KEY_MASTER_CONTROL] ?: false }
     val lastSyncAt: Flow<Long?>          = ds.data.catch { emit(emptyPreferences()) }.map { it[KEY_LAST_SYNC] }
+    /** Why the last Drive sync failed (null = the last sync worked). */
+    val lastSyncError: Flow<String?>     = ds.data.catch { emit(emptyPreferences()) }.map { it[KEY_SYNC_ERROR] }
+    /** Which version of the Drive backup this phone has already merged (or uploaded itself). */
+    val remoteStamp: Flow<String?>       = ds.data.catch { emit(emptyPreferences()) }.map { it[KEY_REMOTE_STAMP] }
+    /** Fingerprint of the last backup this phone uploaded, so unchanged data is not uploaded again. */
+    val pushedHash: Flow<String?>        = ds.data.catch { emit(emptyPreferences()) }.map { it[KEY_PUSHED_HASH] }
 
     suspend fun setSetupComplete(v: Boolean) = ds.edit { it[KEY_SETUP_COMPLETE] = v }
     suspend fun setFirstLaunch(v: Boolean)   = ds.edit { it[KEY_FIRST_LAUNCH] = v }
     suspend fun setUnlockAngle(angle: Float) = ds.edit { it[KEY_UNLOCK_ANGLE] = angle }
     suspend fun setBiometricEnabled(v: Boolean) = ds.edit { it[KEY_BIOMETRIC] = v }
     suspend fun setDarkMode(v: String)          = ds.edit { it[KEY_DARK_MODE] = v }
-    suspend fun setGoogleAccount(v: String?)    = ds.edit { if (v != null) it[KEY_GOOGLE_ACCOUNT] = v else it.remove(KEY_GOOGLE_ACCOUNT) }
+    suspend fun setGoogleAccount(v: String?)    = ds.edit {
+        // A different account has a different backup file: forget what we knew about the old one.
+        if (it[KEY_GOOGLE_ACCOUNT] != v) { it.remove(KEY_REMOTE_STAMP); it.remove(KEY_PUSHED_HASH); it.remove(KEY_SYNC_ERROR) }
+        if (v != null) it[KEY_GOOGLE_ACCOUNT] = v else it.remove(KEY_GOOGLE_ACCOUNT)
+    }
     suspend fun setAutoSync(v: Boolean)         = ds.edit { it[KEY_AUTO_SYNC] = v }
     suspend fun setNotificationsEnabled(v: Boolean) = ds.edit { it[KEY_NOTIFICATIONS] = v }
     suspend fun setAnthropicApiKey(v: String)   = ds.edit { it[KEY_ANTHROPIC_KEY] = v }
     suspend fun setLastSync(v: Long)            = ds.edit { it[KEY_LAST_SYNC] = v }
+    suspend fun setLastSyncError(v: String?)    = ds.edit { if (v != null) it[KEY_SYNC_ERROR] = v else it.remove(KEY_SYNC_ERROR) }
+    suspend fun setRemoteStamp(v: String?)      = ds.edit { if (v != null) it[KEY_REMOTE_STAMP] = v else it.remove(KEY_REMOTE_STAMP) }
+    suspend fun setPushedHash(v: String?)       = ds.edit { if (v != null) it[KEY_PUSHED_HASH] = v else it.remove(KEY_PUSHED_HASH) }
     suspend fun setMasterControlEnabled(v: Boolean) = ds.edit { it[KEY_MASTER_CONTROL] = v }
 }

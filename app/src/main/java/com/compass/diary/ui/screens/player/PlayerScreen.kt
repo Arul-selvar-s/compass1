@@ -788,7 +788,7 @@ private fun SubCategoryBar(
                     Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Text(
-                    "Each song is researched, listened to and double-checked, so this takes a while. You can close the app: sorting continues in the background.",
+                    "Songs are sorted in quick batches from their title, channel and description - a few minutes for a whole library. You can close the app: sorting continues in the background.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

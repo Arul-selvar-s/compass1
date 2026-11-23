@@ -46,7 +46,8 @@ fun CalendarScreen(
         allPhotos.groupBy { it.dateKey }.mapValues { (_, v) -> v.maxByOrNull { it.takenAt } }
     }
     var month   by remember { mutableStateOf(YearMonth.now()) }
-    val today   = remember { LocalDate.now() }
+    val todayKey by viewModel.todayKey.collectAsState()
+    val today   = remember(todayKey) { runCatching { LocalDate.parse(todayKey) }.getOrDefault(LocalDate.now()) }
     var fullPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
 
     Scaffold(
